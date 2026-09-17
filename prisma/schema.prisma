@@ -1,0 +1,690 @@
+// Prisma schema for the Multi-Category Marketplace Platform ("Cloude" model)
+// Database: PostgreSQL (hosted on Supabase)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  BUYER
+  SELLER
+  ADMIN
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  SOLD
+  BOOKED
+  EXPIRED
+  REMOVED
+}
+
+enum PriceType {
+  FIXED
+  CONTACT_FOR_PRICE
+}
+
+enum JobType {
+  FULL_TIME
+  PART_TIME
+  FIELD_JOB
+  WORK_FROM_HOME
+  INTERNSHIP
+  CONTRACTUAL
+  FREELANCE
+}
+
+enum WorkMode {
+  ONSITE
+  REMOTE
+  HYBRID
+}
+
+enum SalaryPeriod {
+  MONTHLY
+  YEARLY
+}
+
+enum ApplicationStatus {
+  APPLIED
+  SHORTLISTED
+  REJECTED
+  HIRED
+  INTERVIEW_SCHEDULED
+}
+
+// Financing Cloude: where a buyer's application for a loan / policy / investment
+// scheme or a financial service has reached.
+enum FinanceApplicationStatus {
+  APPLIED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum OrderChannel {
+  TAKEAWAY
+  DELIVERY
+  DINE_IN
+  SERVICE
+  // Booking Cloude (hotel, event, vehicle, tour...) — dates/addresses live in the
+  // order items' bookingDetails, so there's no takeaway/delivery choice.
+  BOOKING
+}
+
+enum PaymentMethod {
+  ONLINE
+  COD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  NO_SHOW
+}
+
+enum NotificationType {
+  ORDER_PLACED
+  // Jobs & Freelancing Cloude: recruiter is told someone applied...
+  JOB_APPLICATION
+  // ...and the candidate is told when the recruiter schedules their interview.
+  INTERVIEW_SCHEDULED
+  // Financing Cloude: the agency is told someone applied for one of its schemes...
+  FINANCE_APPLICATION
+  // ...and the applicant is told when the agency reviews, approves or rejects it.
+  FINANCE_DECISION
+}
+
+enum SuspensionSource {
+  COD_NO_SHOW
+  ADMIN
+}
+
+// What a seller paid to post: a shop, a classified ad, or a job.
+enum SubscriptionType {
+  SHOP
+  AD
+  JOB
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  name                String
+  email               String    @unique
+  phone               String?   @unique
+  passwordHash        String
+  avatarUrl           String?
+  role                Role      @default(BUYER)
+  city                String?
+  pincode             String?
+  isPhoneVerified     Boolean   @default(false)
+  isEmailVerified     Boolean   @default(false)
+  emailOtpHash        String?
+  emailOtpExpiresAt   DateTime?
+  // Cash-on-delivery no-show enforcement (buyer-side only — see Order/no-show flow).
+  isSuspended         Boolean   @default(false)
+  suspendedAt         DateTime?
+  // Who suspended the account — the COD no-show rule, or the admin from the admin panel.
+  suspendedBy         SuspensionSource?
+  codStrikeCount      Int       @default(0)
+  pendingCodWarning   Boolean   @default(false)
+  // Buyer-side "new products" feed is computed live off Product.createdAt vs this timestamp.
+  notificationsSeenAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  listings                    Listing[]
+  jobsPosted                  Job[]
+  applications                JobApplication[]
+  financeApplications         FinanceApplication[] @relation("FinanceApplicant")
+  financeApplicationsReceived FinanceApplication[] @relation("FinanceAgency")
+  reviewsGiven                Review[]             @relation("ReviewAuthor")
+  reviewsReceived             Review[]             @relation("ReviewTarget")
+  wishlist                    WishlistItem[]
+  reports                     SellerReport[]       @relation("ReportAuthor")
+  reportedTimes               SellerReport[]       @relation("ReportedSeller")
+  conversationsAsBuyer        Conversation[]       @relation("ConversationBuyer")
+  conversationsAsSeller       Conversation[]       @relation("ConversationSeller")
+  messages                    Message[]
+  cartItems                   CartItem[]
+  ordersAsBuyer               Order[]              @relation("OrderBuyer")
+  ordersAsSeller              Order[]              @relation("OrderSeller")
+  notifications               Notification[]
+  subscriptions               Subscription[]
+
+  @@map("users")
+}
+
+// A "Cloude" is a top-level sector grouping (Skill, Booking, Wedding, Jobs, etc.)
+model Cloude {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  slug        String     @unique
+  description String?
+  icon        String?
+  sortOrder   Int        @default(0)
+  categories  Category[]
+  listings    Listing[]
+  createdAt   DateTime   @default(now())
+
+  @@map("cloudes")
+}
+
+// Category / sub-category within a Cloude. Self-referencing for nested sub-categories.
+model Category {
+  id              String     @id @default(uuid())
+  name            String
+  slug            String
+  cloudeId        String
+  cloude          Cloude     @relation(fields: [cloudeId], references: [id], onDelete: Cascade)
+  parentId        String?
+  parent          Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children        Category[] @relation("CategoryTree")
+  // Dynamic attribute schema for the "Post Your Ad" form, configurable from Admin Panel.
+  // Example: [{ "key": "brand", "label": "Brand", "type": "text", "required": true }]
+  attributeSchema Json?
+  listings        Listing[]
+  jobs            Job[]
+  createdAt       DateTime   @default(now())
+
+  @@unique([cloudeId, slug])
+  @@map("categories")
+}
+
+model Listing {
+  id            String         @id @default(uuid())
+  title         String
+  description   String?
+  // Optional shop / business name shown on the listing's card (Step 1 of Post Your Ad).
+  shopName      String?
+  price         Decimal?       @db.Decimal(12, 2)
+  priceType     PriceType      @default(FIXED)
+  status        ListingStatus  @default(DRAFT)
+  city          String?
+  pincode       String?
+  latitude      Float?
+  longitude     Float?
+  // Dynamic attribute values matching the Category's attributeSchema
+  attributes    Json?
+  coverImageUrl String?
+  images        ListingImage[]
+
+  cloudeId   String
+  cloude     Cloude   @relation(fields: [cloudeId], references: [id])
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  sellerId String
+  seller   User   @relation(fields: [sellerId], references: [id])
+
+  reviews             Review[]
+  wishlistedBy        WishlistItem[]
+  // Products the seller has added to this shop after posting the ad (Step 1
+  // of Post Your Ad creates the shop itself; products are added afterwards
+  // from the shop's own page).
+  products            Product[]
+  conversations       Conversation[]
+  orders              Order[]
+  // Financing Cloude: applications buyers sent for this agency's schemes.
+  financeApplications FinanceApplication[]
+  notifications       Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cloudeId])
+  @@index([categoryId])
+  @@index([city])
+  @@map("listings")
+}
+
+model ListingImage {
+  id        String  @id @default(uuid())
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int     @default(0)
+
+  @@map("listing_images")
+}
+
+// An item the seller sells inside one of their shops (a Listing with a
+// shopName). Added from the shop's own page, not through Post Your Ad.
+model Product {
+  id               String    @id @default(uuid())
+  name             String
+  description      String?
+  price            Decimal?  @db.Decimal(12, 2)
+  priceType        PriceType @default(CONTACT_FOR_PRICE)
+  imageUrl         String?
+  // Skill Cloude only: an on-site service (haircut, repair, tutoring...) can't be
+  // delivered or taken away — checkout skips straight to "when will you arrive?"
+  // and only allows online payment.
+  isService        Boolean   @default(false)
+  // Booking Cloude only: what the price is per — FIXED, PER_ROOM_NIGHT, PER_NIGHT,
+  // PER_HOUR, PER_DAY or PER_PERSON. The buyer's total multiplies by their booking
+  // details (rooms × nights, hours, days, people). See cart/booking-details.ts.
+  // Property Cloude reuses it for rent per PER_DAY / PER_MONTH / PER_YEAR (FIXED = for sale).
+  priceUnit        String?
+  // Property Cloude only: what the seller filled in about the place — rent or sale,
+  // BHK, area, furnishing, deposit, amenities, address... Shape depends on the shop's
+  // category; see products/property-details.ts.
+  propertyDetails  Json?
+  // Clinic & Doctors Cloude only: a doctor (qualification, experience, specialisation, the
+  // days and timing they sit) or a medicine (type, composition, pack size, prescription,
+  // expiry). Null for anything else the hospital lists. See products/clinic-details.ts.
+  clinicDetails    Json?
+  // Agriculture & Farmer Cloude transport shops only (Tata Ace Mini Truck, Goods Loading &
+  // Transport, Farm-to-Market Delivery): the vehicle, its load capacity, the delivery charge
+  // (per trip / per km) and the hourly hire rate. See products/transport-details.ts.
+  transportDetails Json?
+  // Financing Cloude only: a loan scheme (amount range, interest rate and type, tenure,
+  // processing fee and every other charge, eligibility, the documents wanted and the
+  // agency's written conditions), an insurance policy, an investment product or a
+  // financial service (ITR / GST filing, accounting, mini bank...). Null for anything
+  // else the agency lists. See products/finance-details.ts.
+  financeDetails   Json?
+  // Education Cloude only: a course (mode, duration, certificate, fee per course / month), a
+  // class (subject, which classes 1–12 it's for, teacher, days and timing, fee), a counselling
+  // service (types, fields covered, session mode) or a new / used book. Null for anything else
+  // (stationery...). See products/education-details.ts.
+  educationDetails Json?
+
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  cartItems           CartItem[]
+  orderItems          OrderItem[]
+  financeApplications FinanceApplication[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([listingId])
+  @@map("products")
+}
+
+// A buyer's "bucket list" — items added from a shop's Buy button, pending checkout.
+model CartItem {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity       Int      @default(1)
+  // Booking Cloude only (hotels, rooms, events, vehicles, movers, courier, tours):
+  // what the buyer asked for — dates, guests, rooms, pickup/drop, budget, etc.
+  // Shape depends on the shop's category; see cart/booking-details.ts.
+  bookingDetails Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, productId])
+  @@map("cart_items")
+}
+
+// One order per shop, created from a buyer's checkout (a bucket spanning several
+// shops becomes several orders sharing the same channel/payment choice).
+model Order {
+  id        String  @id @default(uuid())
+  buyerId   String
+  buyer     User    @relation("OrderBuyer", fields: [buyerId], references: [id])
+  sellerId  String
+  seller    User    @relation("OrderSeller", fields: [sellerId], references: [id])
+  // Null once the seller deletes the shop — the order stays in the buyer's history.
+  listingId String?
+  listing   Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  // Snapshotted at order time so the shop's name still shows after it's deleted.
+  shopName  String?
+
+  channel   OrderChannel
+  // Takeaway only — when the buyer said they'd come collect it.
+  pickupEta DateTime?
+  // Delivery only.
+  address   String?
+
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(PENDING)
+  status        OrderStatus   @default(PENDING)
+  totalAmount   Decimal       @db.Decimal(12, 2)
+
+  items OrderItem[]
+
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([buyerId])
+  @@index([sellerId])
+  @@map("orders")
+}
+
+// Seller-facing "order placed" / "job application" alerts, plus candidate-facing
+// "interview scheduled" alerts. Buyers additionally get a live "latest products"
+// feed (see NotificationsService) that isn't persisted here.
+model Notification {
+  id                   String           @id @default(uuid())
+  userId               String
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type                 NotificationType
+  title                String
+  body                 String
+  orderId              String?
+  order                Order?           @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  jobId                String?
+  job                  Job?             @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  // Financing Cloude alerts point at the agency's shop page (its applications section).
+  listingId            String?
+  listing              Listing?         @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  financeApplicationId String?
+  read                 Boolean          @default(false)
+  createdAt            DateTime         @default(now())
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model OrderItem {
+  id             String  @id @default(uuid())
+  orderId        String
+  order          Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // Null once the seller deletes the product — productName below keeps the line readable.
+  productId      String?
+  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  // Snapshotted at order time so later edits/deletes to the product don't corrupt history.
+  productName    String
+  unitPrice      Decimal @db.Decimal(12, 2)
+  quantity       Int
+  // Booking Cloude only — copied from the cart item at checkout.
+  bookingDetails Json?
+
+  @@map("order_items")
+}
+
+// Jobs & Freelancing Cloude — a recruiter (seller account) posts a job straight
+// into a category (no shop in between); candidates apply to it directly.
+model Job {
+  id               String       @id @default(uuid())
+  title            String
+  // Company or startup name.
+  companyName      String
+  isStartup        Boolean      @default(false)
+  description      String?
+  responsibilities String? // Roles & responsibilities, free text (one per line)
+  skills           String[]     @default([])
+  salaryMin        Int?
+  salaryMax        Int?
+  salaryPeriod     SalaryPeriod @default(YEARLY)
+  location         String? // City
+  pincode          String?
+  jobType          JobType      @default(FULL_TIME)
+  workMode         WorkMode     @default(ONSITE)
+  experience       String? // e.g. "Fresher", "1-3 years"
+  isFilled         Boolean      @default(false)
+  isClosed         Boolean      @default(false)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+  postedById String
+  postedBy   User     @relation(fields: [postedById], references: [id])
+
+  applications  JobApplication[]
+  conversations Conversation[]
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([postedById])
+  @@index([createdAt])
+  @@map("jobs")
+}
+
+model JobApplication {
+  id          String @id @default(uuid())
+  jobId       String
+  job         Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicantId String
+  applicant   User   @relation(fields: [applicantId], references: [id])
+
+  // Candidate details captured by the Apply form (snapshotted, not read off User,
+  // so the recruiter sees exactly what was submitted for this job).
+  fullName           String?
+  email              String?
+  phone              String?
+  address            String?
+  totalExperience    Float? // years
+  currentCompany     String?
+  currentDesignation String?
+  currentSalary      Int? // ₹ per year
+  currentLocation    String?
+  noticePeriod       String? // how soon they can join, e.g. "Immediate", "30 days"
+
+  // Base64 data URL (PDF/DOC/DOCX) — same storage approach as listing photos.
+  // Never returned by list endpoints; fetched on demand via the resume endpoint.
+  resumeUrl      String?
+  resumeFileName String?
+
+  status           ApplicationStatus @default(APPLIED)
+  interviewAt      DateTime?
+  interviewDetails String?
+
+  appliedAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([jobId, applicantId])
+  @@index([applicantId])
+  @@map("job_applications")
+}
+
+// Financing Cloude — a buyer's application for one of an agency's schemes: a loan,
+// an insurance policy, an investment product or a financial service. Applications
+// never go through the cart: nothing is bought, the agency reviews the papers and
+// approves or rejects. Mirrors the Jobs Cloude's JobApplication flow.
+model FinanceApplication {
+  id          String  @id @default(uuid())
+  productId   String
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  listingId   String
+  listing     Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  applicantId String
+  applicant   User    @relation("FinanceApplicant", fields: [applicantId], references: [id])
+  // The agency's owner — denormalised so "applications sent to me" is one indexed read.
+  sellerId    String
+  seller      User    @relation("FinanceAgency", fields: [sellerId], references: [id])
+
+  // Applicant details, snapshotted from the form (not read off User) so the agency
+  // sees exactly what was submitted for this scheme.
+  fullName      String
+  email         String
+  phone         String
+  dateOfBirth   String? // YYYY-MM-DD
+  address       String
+  city          String?
+  pincode       String?
+  occupation    String? // SALARIED / SELF_EMPLOYED / BUSINESS / FARMER / STUDENT / PENSIONER
+  employerName  String?
+  monthlyIncome Int? // ₹
+  existingEmi   Int? // ₹ per month already going out on other loans
+  creditScore   Int? // CIBIL, as declared by the applicant
+
+  // What they asked for. A loan: amount + tenure; a policy: cover; an investment: amount.
+  requestedAmount Int?
+  tenureMonths    Int?
+  purpose         String?
+  nomineeName     String?
+  nomineeRelation String?
+
+  // The repayment / cost working shown to the applicant when they applied (EMI, total
+  // interest, processing fee, GST, net disbursal...), plus the agency's scheme terms as
+  // they stood at that moment — so later edits to the scheme can't change what was agreed.
+  quote         Json?
+  termsSnapshot Json?
+  acceptedTerms Boolean @default(false)
+
+  status         FinanceApplicationStatus @default(APPLIED)
+  // The agency's answer: sanctioned amount / rate / tenure and a note, set on a decision.
+  sellerNote     String?
+  approvedAmount Int?
+  approvedRate   Float?
+  approvedTenure Int?
+  decidedAt      DateTime?
+
+  documents FinanceDocument[]
+
+  appliedAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([productId, applicantId])
+  @@index([applicantId])
+  @@index([sellerId])
+  @@index([listingId])
+  @@map("finance_applications")
+}
+
+// One KYC / income paper uploaded with an application (PAN card, Aadhaar card, bank
+// statement...). The file itself is a base64 data URL — same storage approach as
+// resumes and listing photos — and is never returned by list endpoints.
+model FinanceDocument {
+  id            String             @id @default(uuid())
+  applicationId String
+  application   FinanceApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  // One of the keys in finance/documents.ts, e.g. PAN_CARD / AADHAAR_CARD.
+  docType       String
+  // The card / document number the applicant typed, where one is asked for.
+  docNumber     String?
+  fileName      String
+  dataUrl       String
+  uploadedAt    DateTime           @default(now())
+
+  @@index([applicationId])
+  @@map("finance_documents")
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  rating    Int // 1-5
+  comment   String?
+  authorId  String
+  author    User     @relation("ReviewAuthor", fields: [authorId], references: [id])
+  targetId  String
+  target    User     @relation("ReviewTarget", fields: [targetId], references: [id])
+  listingId String?
+  listing   Listing? @relation(fields: [listingId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("reviews")
+}
+
+model SellerReport {
+  id         String   @id @default(uuid())
+  reporterId String
+  reporter   User     @relation("ReportAuthor", fields: [reporterId], references: [id])
+  sellerId   String
+  seller     User     @relation("ReportedSeller", fields: [sellerId], references: [id])
+  reason     String
+  createdAt  DateTime @default(now())
+
+  @@map("seller_reports")
+}
+
+// Direct chat between a buyer and a shop's seller, scoped to one listing/shop —
+// or, in the Jobs & Freelancing Cloude, between a candidate (buyer) and the
+// recruiter (seller) scoped to one job. Exactly one of listingId / jobId is set.
+model Conversation {
+  id        String    @id @default(uuid())
+  listingId String?
+  listing   Listing?  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  jobId     String?
+  job       Job?      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  buyerId   String
+  buyer     User      @relation("ConversationBuyer", fields: [buyerId], references: [id])
+  sellerId  String
+  seller    User      @relation("ConversationSeller", fields: [sellerId], references: [id])
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([listingId, buyerId])
+  @@unique([jobId, buyerId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id])
+  content        String
+  read           Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, listingId])
+  @@map("wishlist_items")
+}
+
+// A seller's paid posting plan (shop / ad / job). Listed in the admin panel.
+model Subscription {
+  id         String             @id @default(uuid())
+  userId     String
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       SubscriptionType
+  planName   String
+  amount     Decimal            @db.Decimal(12, 2)
+  status     SubscriptionStatus @default(ACTIVE)
+  // Payment gateway reference (order / transaction id).
+  paymentRef String?
+  // The shop / ad or job this payment was for, when known.
+  listingId  String?
+  jobId      String?
+  paidAt     DateTime           @default(now())
+  expiresAt  DateTime?
+  createdAt  DateTime           @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@map("subscriptions")
+}
+
+// Site-wide settings the admin controls (a single row, id "global").
+model SiteSetting {
+  id         String   @id @default("global")
+  // Brand colour as a hex string, e.g. "#007AFF". Null = the built-in default.
+  brandColor String?
+  updatedAt  DateTime @updatedAt
+
+  @@map("site_settings")
+}
