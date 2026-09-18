@@ -105,6 +105,14 @@ enum NotificationType {
   FINANCE_APPLICATION
   // ...and the applicant is told when the agency reviews, approves or rejects it.
   FINANCE_DECISION
+  // Broadcast from the admin panel to every buyer and/or seller.
+  ANNOUNCEMENT
+}
+
+enum GlowLevel {
+  VIVID
+  SUBTLE
+  MINIMAL
 }
 
 enum SuspensionSource {
@@ -126,30 +134,30 @@ enum SubscriptionStatus {
 }
 
 model User {
-  id                  String    @id @default(uuid())
+  id                  String            @id @default(uuid())
   name                String
-  email               String    @unique
-  phone               String?   @unique
+  email               String            @unique
+  phone               String?           @unique
   passwordHash        String
   avatarUrl           String?
-  role                Role      @default(BUYER)
+  role                Role              @default(BUYER)
   city                String?
   pincode             String?
-  isPhoneVerified     Boolean   @default(false)
-  isEmailVerified     Boolean   @default(false)
+  isPhoneVerified     Boolean           @default(false)
+  isEmailVerified     Boolean           @default(false)
   emailOtpHash        String?
   emailOtpExpiresAt   DateTime?
   // Cash-on-delivery no-show enforcement (buyer-side only — see Order/no-show flow).
-  isSuspended         Boolean   @default(false)
+  isSuspended         Boolean           @default(false)
   suspendedAt         DateTime?
   // Who suspended the account — the COD no-show rule, or the admin from the admin panel.
   suspendedBy         SuspensionSource?
-  codStrikeCount      Int       @default(0)
-  pendingCodWarning   Boolean   @default(false)
+  codStrikeCount      Int               @default(0)
+  pendingCodWarning   Boolean           @default(false)
   // Buyer-side "new products" feed is computed live off Product.createdAt vs this timestamp.
   notificationsSeenAt DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
   listings                    Listing[]
   jobsPosted                  Job[]
@@ -169,6 +177,7 @@ model User {
   ordersAsSeller              Order[]              @relation("OrderSeller")
   notifications               Notification[]
   subscriptions               Subscription[]
+  advertisementViews          AdvertisementView[]
 
   @@map("users")
 }
@@ -344,11 +353,11 @@ model CartItem {
 // One order per shop, created from a buyer's checkout (a bucket spanning several
 // shops becomes several orders sharing the same channel/payment choice).
 model Order {
-  id        String  @id @default(uuid())
+  id        String   @id @default(uuid())
   buyerId   String
-  buyer     User    @relation("OrderBuyer", fields: [buyerId], references: [id])
+  buyer     User     @relation("OrderBuyer", fields: [buyerId], references: [id])
   sellerId  String
-  seller    User    @relation("OrderSeller", fields: [sellerId], references: [id])
+  seller    User     @relation("OrderSeller", fields: [sellerId], references: [id])
   // Null once the seller deletes the shop — the order stays in the buyer's history.
   listingId String?
   listing   Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
@@ -404,15 +413,15 @@ model Notification {
 }
 
 model OrderItem {
-  id             String  @id @default(uuid())
+  id             String   @id @default(uuid())
   orderId        String
-  order          Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   // Null once the seller deletes the product — productName below keeps the line readable.
   productId      String?
   product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   // Snapshotted at order time so later edits/deletes to the product don't corrupt history.
   productName    String
-  unitPrice      Decimal @db.Decimal(12, 2)
+  unitPrice      Decimal  @db.Decimal(12, 2)
   quantity       Int
   // Booking Cloude only — copied from the cart item at checkout.
   bookingDetails Json?
@@ -681,10 +690,60 @@ model Subscription {
 
 // Site-wide settings the admin controls (a single row, id "global").
 model SiteSetting {
-  id         String   @id @default("global")
+  id         String    @id @default("global")
   // Brand colour as a hex string, e.g. "#007AFF". Null = the built-in default.
   brandColor String?
-  updatedAt  DateTime @updatedAt
+  // How strongly brand-tinted glows are drawn around CTAs across the site.
+  glow       GlowLevel @default(VIVID)
+  // Who saved the theme last, for the "last saved" line in the admin panel.
+  updatedBy  String?
+  updatedAt  DateTime  @updatedAt
 
   @@map("site_settings")
+}
+
+enum AdvertisementKind {
+  SHOP
+  SERVICE
+}
+
+enum AdAudience {
+  ALL
+  BUYER
+  SELLER
+}
+
+// A shop or service the admin promotes. It pops up for every buyer and/or seller
+// the next time they land on the site, and keeps popping up until they close it.
+model Advertisement {
+  id          String              @id @default(uuid())
+  kind        AdvertisementKind
+  // The shop's or the service's name — the pop-up's headline.
+  name        String
+  description String?
+  // Base64 data URL — same storage approach as listing photos.
+  imageUrl    String
+  // Where the pop-up's button leads: a page on this site ("/listing/…") or an https link.
+  linkUrl     String?
+  audience    AdAudience          @default(ALL)
+  // Null = runs until the admin takes it down.
+  endsAt      DateTime?
+  views       AdvertisementView[]
+  createdAt   DateTime            @default(now())
+
+  @@index([createdAt])
+  @@map("advertisements")
+}
+
+// A user closed an advertisement's pop-up, so it won't pop up for them again.
+model AdvertisementView {
+  advertisementId String
+  advertisement   Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seenAt          DateTime      @default(now())
+
+  @@id([advertisementId, userId])
+  @@index([userId])
+  @@map("advertisement_views")
 }

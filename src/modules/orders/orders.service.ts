@@ -172,12 +172,22 @@ export class OrdersService {
     return orders;
   }
 
-  findMine(buyerId: string) {
-    return this.prisma.order.findMany({
+  // Each order carries the buyer's own rating of its shop (null until they rate it).
+  async findMine(buyerId: string) {
+    const orders = await this.prisma.order.findMany({
       where: { buyerId },
       include: orderInclude,
       orderBy: { createdAt: 'desc' },
     });
+    const listingIds = [...new Set(orders.map((o) => o.listingId).filter((id): id is string => !!id))];
+    const reviews = listingIds.length
+      ? await this.prisma.review.findMany({
+          where: { authorId: buyerId, listingId: { in: listingIds } },
+          select: { listingId: true, rating: true },
+        })
+      : [];
+    const ratingBy = new Map(reviews.map((r) => [r.listingId, r.rating]));
+    return orders.map((o) => ({ ...o, myRating: (o.listingId && ratingBy.get(o.listingId)) || null }));
   }
 
   async receive(buyerId: string, orderId: string) {

@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { CreateReviewDto, ReportSellerDto } from './dto';
+import { CreateReviewDto, RateOrderDto, ReportSellerDto } from './dto';
 import { ReviewsService } from './reviews.service';
 
 @ApiTags('reviews')
@@ -18,6 +18,12 @@ export class ReviewsController {
   @Post()
   create(@Req() req: any, @Body() dto: CreateReviewDto) {
     return this.reviewsService.createReview(req.user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('order/:orderId')
+  rateOrder(@Req() req: any, @Param('orderId') orderId: string, @Body() dto: RateOrderDto) {
+    return this.reviewsService.rateOrder(req.user.userId, orderId, dto);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -45,6 +45,15 @@ export class CreateListingDto {
   @IsString()
   pincode?: string;
 
+  // Filled when the seller used "Use current location" — lets buyers ~25 km away find the shop.
+  @IsOptional()
+  @IsNumber()
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  longitude?: number;
+
   // Dynamic fields defined by the category's attributeSchema (Section 6.1, Step 3)
   @IsOptional()
   attributes?: Record<string, any>;
@@ -76,6 +85,21 @@ export class ListingQueryDto {
   @IsString()
   q?: string;
 
+  // The visitor's area from the navbar location picker — see common/nearby.ts.
+  @IsOptional()
+  @IsString()
+  pincode?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  lat?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  lng?: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -93,4 +117,29 @@ export class ListingQueryDto {
   @IsOptional()
   @Type(() => Number)
   pageSize?: number = 20;
+}
+
+export class FreshQueryDto {
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  pincode?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  lat?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  lng?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  limit?: number;
 }

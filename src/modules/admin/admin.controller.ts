@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AdminService } from './admin.service';
-import { ListSubscriptionsQuery, ListUsersQuery, SetSuspendedDto, UpdateThemeDto } from './dto';
+import { AnnouncementDto, ListSubscriptionsQuery, ListUsersQuery, SetSuspendedDto, StatsQuery, UpdateThemeDto } from './dto';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -15,8 +15,18 @@ export class AdminController {
   constructor(private admin: AdminService) {}
 
   @Get('stats')
-  stats() {
-    return this.admin.stats();
+  stats(@Query() query: StatsQuery) {
+    return this.admin.stats(query.days ?? 30);
+  }
+
+  @Get('insights')
+  insights(@Query() query: StatsQuery) {
+    return this.admin.insights(query.days ?? 30);
+  }
+
+  @Post('announcements')
+  announce(@Body() dto: AnnouncementDto) {
+    return this.admin.announce(dto);
   }
 
   @Get('users')
@@ -39,9 +49,14 @@ export class AdminController {
     return this.admin.listSubscriptions(query);
   }
 
+  @Get('theme')
+  getTheme() {
+    return this.admin.getTheme(true);
+  }
+
   @Put('theme')
-  updateTheme(@Body() dto: UpdateThemeDto) {
-    return this.admin.updateTheme(dto.brandColor);
+  updateTheme(@Req() req: any, @Body() dto: UpdateThemeDto) {
+    return this.admin.updateTheme(dto, req.user?.email ?? null);
   }
 }
 

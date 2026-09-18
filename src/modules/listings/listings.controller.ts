@@ -3,7 +3,8 @@ import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { CreateListingDto, ListingQueryDto } from './dto';
+import { parseNear } from '../../common/nearby';
+import { CreateListingDto, FreshQueryDto, ListingQueryDto } from './dto';
 import { ListingsService } from './listings.service';
 
 @ApiTags('listings')
@@ -14,6 +15,13 @@ export class ListingsController {
   @Get()
   findAll(@Query() query: ListingQueryDto) {
     return this.listingsService.findAll(query);
+  }
+
+  // Home page "Fresh listings near you" — the best-rated shops, services and jobs in the
+  // visitor's area. Declared before ':id' so "fresh" isn't treated as a listing id.
+  @Get('fresh')
+  fresh(@Query() query: FreshQueryDto) {
+    return this.listingsService.freshFeed(parseNear(query), Number(query.limit) || 8);
   }
 
   // Declared before ':id' so "sitemap" isn't treated as a listing id.

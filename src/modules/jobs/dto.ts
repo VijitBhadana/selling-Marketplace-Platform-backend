@@ -120,6 +120,17 @@ export class JobQueryDto {
   @MaxLength(100)
   location?: string;
 
+  // The visitor's area from the navbar location picker — see common/nearby.ts.
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  pincode?: string;
+
   @IsOptional()
   @IsEnum(JobType)
   jobType?: JobType;

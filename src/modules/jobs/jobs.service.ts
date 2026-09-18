@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { jobNearWhere, parseNear } from '../../common/nearby';
 import { PUBLICLY_VISIBLE_USER } from '../../common/visibility';
 import { ApplyJobDto, CreateJobDto, JobQueryDto, ScheduleInterviewDto } from './dto';
 
@@ -109,6 +110,8 @@ export class JobsService {
     if (query.categoryId) where.categoryId = query.categoryId;
 
     if (query.location?.trim()) where.location = { contains: query.location.trim(), mode: 'insensitive' };
+    const near = jobNearWhere(parseNear(query));
+    if (near) where.AND = [near];
     if (query.jobType) where.jobType = query.jobType;
     if (query.workMode) where.workMode = query.workMode;
     if (query.postedWithinDays) {

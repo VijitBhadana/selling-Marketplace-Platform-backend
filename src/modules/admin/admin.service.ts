@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { ListSubscriptionsQuery, ListUsersQuery } from './dto';
+import { AnnouncementDto, ListSubscriptionsQuery, ListUsersQuery, UpdateThemeDto } from './dto';
 
 // Everything the admin may see about a user — never the password or OTP hashes.
 const userSelect = {
@@ -32,8 +32,8 @@ const NOT_ADMIN: Prisma.UserWhereInput = { role: { in: ['BUYER', 'SELLER'] } };
 export class AdminService {
   constructor(private prisma: PrismaService) {}
 
-  async stats() {
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  async stats(days = 30) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const [buyers, sellers, suspended, newUsers, listings, jobs, activeSubscriptions] = await Promise.all([
       this.prisma.user.count({ where: { role: 'BUYER' } }),
       this.prisma.user.count({ where: { role: 'SELLER' } }),
@@ -47,12 +47,69 @@ export class AdminService {
       buyers,
       sellers,
       suspended,
+      days,
+      newUsers,
+      // Kept for older clients.
       newUsersLast30Days: newUsers,
       listings,
       jobs,
       activeSubscriptions,
       inactiveSubscriptions: sellers - activeSubscriptions,
     };
+  }
+
+  // Business insights for the dashboard: order volume in the window, the
+  // busiest Cloudes, and accounts or posts that need the admin's attention.
+  async insights(days = 30) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const inWindow = { createdAt: { gte: since } };
+
+    const [byStatus, revenue, perCloude, cloudes, unverified, codStrikes, reports, drafts] = await Promise.all([
+      this.prisma.order.groupBy({ by: ['status'], where: inWindow, _count: { _all: true } }),
+      this.prisma.order.aggregate({ where: { ...inWindow, status: { not: 'NO_SHOW' } }, _sum: { totalAmount: true } }),
+      this.prisma.listing.groupBy({ by: ['cloudeId'], _count: { _all: true } }),
+      this.prisma.cloude.findMany({ select: { id: true, name: true, slug: true } }),
+      this.prisma.user.count({ where: { ...NOT_ADMIN, isEmailVerified: false, isPhoneVerified: false } }),
+      this.prisma.user.count({ where: { ...NOT_ADMIN, codStrikeCount: { gt: 0 }, isSuspended: false } }),
+      this.prisma.sellerReport.count({ where: inWindow }),
+      this.prisma.listing.count({ where: { status: 'DRAFT' } }),
+    ]);
+
+    const count = (status: string) => byStatus.find((s) => s.status === status)?._count._all ?? 0;
+    const names = new Map(cloudes.map((c) => [c.id, c]));
+    const topCloudes = perCloude
+      .map((g) => ({ name: names.get(g.cloudeId)?.name ?? 'Unknown', slug: names.get(g.cloudeId)?.slug ?? '', listings: g._count._all }))
+      .sort((x, y) => y.listings - x.listings)
+      .slice(0, 5);
+
+    return {
+      days,
+      orders: {
+        total: count('PENDING') + count('COMPLETED') + count('NO_SHOW'),
+        pending: count('PENDING'),
+        completed: count('COMPLETED'),
+        noShow: count('NO_SHOW'),
+        revenue: Number(revenue._sum.totalAmount ?? 0),
+      },
+      topCloudes,
+      attention: { unverified, codStrikes, reports, drafts },
+    };
+  }
+
+  async announce(dto: AnnouncementDto) {
+    const recipients = await this.prisma.user.findMany({
+      where: dto.audience === 'ALL' ? NOT_ADMIN : { role: dto.audience },
+      select: { id: true },
+    });
+    const { count } = await this.prisma.notification.createMany({
+      data: recipients.map((u) => ({
+        userId: u.id,
+        type: 'ANNOUNCEMENT' as const,
+        title: dto.title.trim(),
+        body: dto.body.trim(),
+      })),
+    });
+    return { sent: count };
   }
 
   async listUsers(query: ListUsersQuery) {
@@ -176,18 +233,21 @@ export class AdminService {
     }));
   }
 
-  async getTheme() {
+  // `withHistory` adds who saved the theme last and when — admin panel only.
+  async getTheme(withHistory = false) {
     const setting = await this.prisma.siteSetting.findUnique({ where: { id: 'global' } });
-    return { brandColor: setting?.brandColor ?? null };
+    const theme = { brandColor: setting?.brandColor ?? null, glow: setting?.glow ?? 'VIVID' };
+    return withHistory ? { ...theme, updatedBy: setting?.updatedBy ?? null, updatedAt: setting?.updatedAt ?? null } : theme;
   }
 
-  async updateTheme(brandColor: string | null) {
-    const value = brandColor ? brandColor.toUpperCase() : null;
+  async updateTheme(dto: UpdateThemeDto, updatedBy: string | null) {
+    const brandColor = dto.brandColor ? dto.brandColor.toUpperCase() : null;
+    const data = { brandColor, ...(dto.glow ? { glow: dto.glow } : {}), updatedBy };
     const setting = await this.prisma.siteSetting.upsert({
       where: { id: 'global' },
-      update: { brandColor: value },
-      create: { id: 'global', brandColor: value },
+      update: data,
+      create: { id: 'global', ...data },
     });
-    return { brandColor: setting.brandColor };
+    return { brandColor: setting.brandColor, glow: setting.glow, updatedBy: setting.updatedBy, updatedAt: setting.updatedAt };
   }
 }
