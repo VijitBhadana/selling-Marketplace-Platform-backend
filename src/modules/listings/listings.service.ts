@@ -50,7 +50,11 @@ export class ListingsService {
     const [items, total] = await Promise.all([
       this.prisma.listing.findMany({
         where,
-        include: { cloude: true, category: true, seller: { select: { id: true, name: true } } },
+        include: {
+          cloude: true,
+          category: true,
+          seller: { select: { id: true, name: true, isEmailVerified: true, isPhoneVerified: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -58,7 +62,14 @@ export class ListingsService {
       this.prisma.listing.count({ where }),
     ]);
 
-    return { items, total, page, pageSize };
+    // Buyers' star rating per shop — shown on the Cloude page's shop cards.
+    const scores = await scoreListings(this.prisma, items);
+    return {
+      items: items.map((l) => ({ ...l, rating: scores.get(l.id)!.rating })),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   /**
