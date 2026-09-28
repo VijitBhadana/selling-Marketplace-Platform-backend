@@ -1,0 +1,95 @@
+name: Deploy to AWS
+
+# Every push to main is released. Pull requests only build, so a broken branch
+# cannot reach production.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Never let two deploys race: a slower older run must not overwrite a newer one.
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  EB_APP: marketplace-backend
+  EB_ENV: marketplace-backend-env
+  S3_BUCKET: elasticbeanstalk-ap-south-1-108703419949
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # DATABASE_URL is required for `prisma generate` to parse the schema, but
+      # the client is generated from the schema alone, so a placeholder is fine
+      # and no real credentials are needed at build time.
+      - name: Install dependencies
+        run: npm ci
+        env:
+          DATABASE_URL: postgresql://user:pass@localhost:5432/db
+          DIRECT_URL: postgresql://user:pass@localhost:5432/db
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify the entry point exists
+        # nest emits dist/src/main.js here; catch it at build time rather than
+        # discovering it from a crash loop on the instance.
+        run: test -f dist/src/main.js
+
+      - name: Package deployment bundle
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          mkdir -p bundle
+          cp -R dist prisma package.json package-lock.json bundle/
+          echo 'web: node dist/src/main.js' > bundle/Procfile
+          echo 'legacy-peer-deps=true' > bundle/.npmrc
+          cd bundle && zip -qr ../deploy.zip .
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to Elastic Beanstalk
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          VERSION="mp-${GITHUB_SHA::7}-$(date +%s)"
+          aws s3 cp deploy.zip "s3://$S3_BUCKET/marketplace/$VERSION.zip"
+          aws elasticbeanstalk create-application-version \
+            --application-name "$EB_APP" \
+            --version-label "$VERSION" \
+            --source-bundle S3Bucket="$S3_BUCKET",S3Key="marketplace/$VERSION.zip" \
+            --description "${GITHUB_SHA::7} $(git log -1 --pretty=%s | cut -c1-120)"
+          aws elasticbeanstalk update-environment \
+            --environment-name "$EB_ENV" --version-label "$VERSION"
+          echo "Deploying $VERSION"
+
+      - name: Wait for the deployment to finish
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          for i in $(seq 1 40); do
+            read -r status health <<< "$(aws elasticbeanstalk describe-environments \
+              --environment-names "$EB_ENV" \
+              --query 'Environments[0].[Status,Health]' --output text)"
+            echo "  $status / $health"
+            if [ "$status" = "Ready" ]; then
+              [ "$health" = "Red" ] && { echo "Environment is Red after deploy"; exit 1; }
+              echo "Deployed"; exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for the environment"; exit 1
