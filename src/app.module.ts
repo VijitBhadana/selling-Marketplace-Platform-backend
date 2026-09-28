@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { HealthController } from './health.controller';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { MailModule } from './common/mail/mail.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -41,5 +42,6 @@ import { AdvertisementsModule } from './modules/advertisements/advertisements.mo
     AdminModule,
     AdvertisementsModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}
