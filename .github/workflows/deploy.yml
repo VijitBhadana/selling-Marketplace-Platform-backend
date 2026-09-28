@@ -52,7 +52,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
           mkdir -p bundle
-          cp -R dist prisma package.json package-lock.json bundle/
+          cp -R dist prisma .platform package.json package-lock.json bundle/
           echo 'web: node dist/src/main.js' > bundle/Procfile
           echo 'legacy-peer-deps=true' > bundle/.npmrc
           cd bundle && zip -qr ../deploy.zip .
