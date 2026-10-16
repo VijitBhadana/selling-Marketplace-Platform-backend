@@ -26,7 +26,7 @@ const userSelect = {
   },
 } satisfies Prisma.UserSelect;
 
-const NOT_ADMIN: Prisma.UserWhereInput = { role: { in: ['BUYER', 'SELLER'] } };
+const NOT_ADMIN: Prisma.UserWhereInput = { role: { in: ['BUYER', 'SELLER', 'DELIVERY'] } };
 
 @Injectable()
 export class AdminService {
@@ -166,6 +166,30 @@ export class AdminService {
           orderBy: { createdAt: 'desc' },
         },
         subscriptions: { orderBy: { paidAt: 'desc' } },
+        // Delivery partners: the papers they signed up with, photos included, for the admin to check.
+        aadhaarLast4: true,
+        deliveryProfile: {
+          select: {
+            address: true,
+            vehicleType: true,
+            vehicleNumber: true,
+            licenseNumber: true,
+            licenseImage: true,
+            aadhaarImage: true,
+            city: true,
+            pincode: true,
+          },
+        },
+        _count: {
+          select: {
+            listings: true,
+            jobsPosted: true,
+            ordersAsBuyer: true,
+            ordersAsSeller: true,
+            subscriptions: true,
+            deliveriesTaken: true,
+          },
+        },
       },
     });
     if (!user) throw new NotFoundException('User not found');

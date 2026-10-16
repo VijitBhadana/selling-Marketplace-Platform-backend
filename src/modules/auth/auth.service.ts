@@ -6,6 +6,8 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { MailService } from '../../common/mail/mail.service';
 import { LoginDto, RegisterDto, ResendOtpDto, VerifyOtpDto } from './dto';
 import { ADMIN_EMAIL } from '../admin/admin-account';
+import { hashAadhaar, isValidAadhaar, isValidGstin, normalizeAadhaar, normalizeGstin } from './seller-kyc';
+import { isImageDataUrl, isValidLicense, isValidVehicleNumber, normalizeLicense, normalizeVehicleNumber } from './delivery-kyc';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
@@ -29,6 +31,51 @@ export class AuthService {
     // otherwise collide on the empty string and crash with a raw 500.
     const phone = dto.phone?.trim() || undefined;
 
+    // Sellers must give a valid Aadhaar and GSTIN (offline checksum checks only).
+    // Buyers' values, if any, are ignored.
+    let sellerKyc: { aadhaarHash: string; aadhaarLast4: string; gstin: string } | undefined;
+    if (dto.role === 'SELLER') {
+      const aadhaar = this.checkAadhaar(dto.aadhaar, 'seller accounts');
+      if (!dto.gstin) throw new BadRequestException('GST number is required for seller accounts');
+      if (normalizeGstin(dto.gstin).length !== 15) throw new BadRequestException('GST number must be exactly 15 characters');
+      if (!isValidGstin(dto.gstin)) {
+        throw new BadRequestException('This GST number is not valid. Please check it against your GST certificate.');
+      }
+      sellerKyc = { aadhaarHash: hashAadhaar(aadhaar), aadhaarLast4: aadhaar.slice(-4), gstin: normalizeGstin(dto.gstin) };
+    }
+
+    // Delivery partners: phone, Aadhaar (number + photo), driving licence (number + photo),
+    // vehicle and address. Their working location is set later, from the delivery panel.
+    let deliveryProfile: Prisma.DeliveryProfileCreateWithoutUserInput | undefined;
+    let deliveryAadhaar: { aadhaarHash: string; aadhaarLast4: string } | undefined;
+    if (dto.role === 'DELIVERY') {
+      if (!phone) throw new BadRequestException('Phone number is required for delivery partners');
+      const aadhaar = this.checkAadhaar(dto.aadhaar, 'delivery partners');
+      if (!isImageDataUrl(dto.aadhaarImage)) throw new BadRequestException('Please upload a photo of your Aadhaar card (JPG or PNG)');
+      if (!dto.licenseNumber) throw new BadRequestException('Driving licence number is required for delivery partners');
+      if (!isValidLicense(dto.licenseNumber)) {
+        throw new BadRequestException('This driving licence number is not valid. It looks like "UP14 20190012345" on your licence.');
+      }
+      if (!isImageDataUrl(dto.licenseImage)) throw new BadRequestException('Please upload a photo of your driving licence (JPG or PNG)');
+      if (!dto.vehicleType) throw new BadRequestException('Please choose your vehicle');
+      const needsNumber = dto.vehicleType !== 'BICYCLE';
+      if (needsNumber && !dto.vehicleNumber) throw new BadRequestException('Vehicle number is required');
+      if (needsNumber && !isValidVehicleNumber(dto.vehicleNumber!)) {
+        throw new BadRequestException('This vehicle number is not valid. It looks like "UP15 AB 1234" on your number plate.');
+      }
+      if (!dto.address || dto.address.length < 10) throw new BadRequestException('Please enter your full address');
+
+      deliveryAadhaar = { aadhaarHash: hashAadhaar(aadhaar), aadhaarLast4: aadhaar.slice(-4) };
+      deliveryProfile = {
+        address: dto.address,
+        vehicleType: dto.vehicleType,
+        vehicleNumber: needsNumber ? normalizeVehicleNumber(dto.vehicleNumber!) : null,
+        licenseNumber: normalizeLicense(dto.licenseNumber),
+        licenseImage: dto.licenseImage!,
+        aadhaarImage: dto.aadhaarImage!,
+      };
+    }
+
     try {
       const user = await this.prisma.user.create({
         data: {
@@ -37,16 +84,35 @@ export class AuthService {
           phone,
           passwordHash,
           role: (dto.role as any) ?? 'BUYER',
+          ...sellerKyc,
+          ...deliveryAadhaar,
+          ...(deliveryProfile ? { deliveryProfile: { create: deliveryProfile } } : {}),
         },
       });
       await this.issueOtp(user.id, user.email);
       return { email: user.email, message: 'Registered. Enter the OTP sent to your email to verify your account.' };
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const target = String(err.meta?.target ?? '');
+        if (target.includes('aadhaarHash')) throw new ConflictException('This Aadhaar number is already registered with another account');
+        if (target.includes('gstin')) throw new ConflictException('This GST number is already registered with another seller');
+        if (target.includes('licenseNumber')) {
+          throw new ConflictException('This driving licence is already registered with another delivery partner');
+        }
         throw new ConflictException('That email or phone number is already registered');
       }
       throw err;
     }
+  }
+
+  /** Validates a seller's / delivery partner's Aadhaar number and returns its 12 digits. */
+  private checkAadhaar(value: string | undefined, who: string) {
+    if (!value) throw new BadRequestException(`Aadhaar number is required for ${who}`);
+    if (normalizeAadhaar(value).length !== 12) throw new BadRequestException('Aadhaar number must be exactly 12 digits');
+    if (!isValidAadhaar(value)) {
+      throw new BadRequestException('This Aadhaar number is not valid. Please check it against your Aadhaar card.');
+    }
+    return normalizeAadhaar(value);
   }
 
   async verifyOtp(dto: VerifyOtpDto) {

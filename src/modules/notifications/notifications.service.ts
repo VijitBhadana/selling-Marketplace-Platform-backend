@@ -8,7 +8,8 @@ export class NotificationsService {
   constructor(private prisma: PrismaService) {}
 
   async list(userId: string, role: string) {
-    if (role === 'SELLER') {
+    // Sellers and delivery partners only get persisted alerts (orders, delivery requests...).
+    if (role === 'SELLER' || role === 'DELIVERY') {
       const items = await this.prisma.notification.findMany({
         where: { userId },
         orderBy: { createdAt: 'desc' },
@@ -72,7 +73,7 @@ export class NotificationsService {
   }
 
   async unreadCount(userId: string, role: string) {
-    if (role === 'SELLER') {
+    if (role === 'SELLER' || role === 'DELIVERY') {
       const count = await this.prisma.notification.count({ where: { userId, read: false } });
       return { count };
     }

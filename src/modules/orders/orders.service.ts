@@ -11,11 +11,42 @@ import {
   transportTermsChanged,
 } from '../cart/booking-details';
 import { CheckoutDto, OrderChannelDto, PaymentMethodDto } from './dto';
+import { notifyNearbyDeliveryPartners } from '../delivery/dispatch';
+import { maskLicense } from '../auth/delivery-kyc';
 
 const orderInclude = {
   items: true,
   listing: { select: { id: true, shopName: true, title: true } },
+  // Delivery orders: who's carrying it — shown to both the buyer and the shop.
+  deliveryPartner: {
+    select: {
+      name: true,
+      phone: true,
+      deliveryProfile: { select: { vehicleType: true, vehicleNumber: true, licenseNumber: true } },
+    },
+  },
 } as const;
+
+type PartnerRow = {
+  name: string;
+  phone: string | null;
+  deliveryProfile: { vehicleType: string; vehicleNumber: string | null; licenseNumber: string } | null;
+} | null;
+
+/** Flattens the delivery partner into what the buyer / shop is shown, licence number masked. */
+function withPartnerDetails<T extends { deliveryPartner: PartnerRow }>(order: T) {
+  const p = order.deliveryPartner;
+  return {
+    ...order,
+    deliveryPartner: p && {
+      name: p.name,
+      phone: p.phone,
+      vehicleType: p.deliveryProfile?.vehicleType ?? null,
+      vehicleNumber: p.deliveryProfile?.vehicleNumber ?? null,
+      licenseNumber: p.deliveryProfile ? maskLicense(p.deliveryProfile.licenseNumber) : null,
+    },
+  };
+}
 
 @Injectable()
 export class OrdersService {
@@ -86,6 +117,11 @@ export class OrdersService {
     }
 
     if (dto.paymentMethod === PaymentMethodDto.COD) {
+      // A delivery partner collects the order from the shop, so it's always paid for
+      // online, up front — there's no cash for the partner to carry back.
+      if (!allBooking && dto.channel === OrderChannelDto.DELIVERY) {
+        throw new BadRequestException('Delivery orders must be paid online in advance.');
+      }
       const hasFoodItem = [...groupsByListing.values()].some((items) => items[0].product.listing.cloude?.slug === 'food');
       if (hasFoodItem) {
         throw new BadRequestException('Only online payment is accepted for food orders.');
@@ -136,6 +172,7 @@ export class OrdersService {
             channel: (isBooking ? OrderChannelDto.BOOKING : dto.channel) as any,
             pickupEta: isBooking ? bookingNoShowAfter(lines.map((line) => line.bookingDetails ?? {})) : pickupEta,
             address: !isBooking && dto.channel === OrderChannelDto.DELIVERY ? dto.address!.trim() : null,
+            deliveryStatus: !isBooking && dto.channel === OrderChannelDto.DELIVERY ? 'SEARCHING' : null,
             paymentMethod: dto.paymentMethod as any,
             paymentStatus,
             totalAmount,
@@ -169,6 +206,13 @@ export class OrdersService {
       return created;
     });
 
+    // The order is placed either way — a failed alert must not fail the checkout.
+    // Partners still find the order in their panel's requests list.
+    await notifyNearbyDeliveryPartners(
+      this.prisma,
+      orders.filter((o) => o.deliveryStatus === 'SEARCHING').map((o) => o.id),
+    ).catch((err) => console.error('Could not notify delivery partners', err));
+
     return orders;
   }
 
@@ -187,7 +231,7 @@ export class OrdersService {
         })
       : [];
     const ratingBy = new Map(reviews.map((r) => [r.listingId, r.rating]));
-    return orders.map((o) => ({ ...o, myRating: (o.listingId && ratingBy.get(o.listingId)) || null }));
+    return orders.map((o) => withPartnerDetails({ ...o, myRating: (o.listingId && ratingBy.get(o.listingId)) || null }));
   }
 
   async receive(buyerId: string, orderId: string) {
@@ -195,22 +239,24 @@ export class OrdersService {
     if (!order || order.buyerId !== buyerId) throw new NotFoundException('Order not found');
     if (order.status !== 'PENDING') throw new BadRequestException('This order is already settled.');
 
-    return this.prisma.order.update({
+    const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: { status: 'COMPLETED' },
       include: orderInclude,
     });
+    return withPartnerDetails(updated);
   }
 
   async findForShop(sellerId: string, listingId: string) {
     const listing = await this.prisma.listing.findUnique({ where: { id: listingId }, select: { sellerId: true } });
     if (!listing || listing.sellerId !== sellerId) throw new ForbiddenException('Not your shop');
 
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where: { listingId },
       include: orderInclude,
       orderBy: { createdAt: 'desc' },
     });
+    return orders.map(withPartnerDetails);
   }
 
   async markNoShow(sellerId: string, orderId: string) {
@@ -242,7 +288,7 @@ export class OrdersService {
         await tx.user.update({ where: { id: order.buyerId }, data: { pendingCodWarning: true } });
       }
 
-      return updated;
+      return withPartnerDetails(updated);
     });
   }
 }

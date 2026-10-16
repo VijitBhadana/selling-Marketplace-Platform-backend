@@ -11,8 +11,8 @@ export class StatsQuery {
 
 export class ListUsersQuery {
   @IsOptional()
-  @IsIn(['BUYER', 'SELLER'])
-  role?: 'BUYER' | 'SELLER';
+  @IsIn(['BUYER', 'SELLER', 'DELIVERY'])
+  role?: 'BUYER' | 'SELLER' | 'DELIVERY';
 
   @IsOptional()
   @IsIn(['active', 'suspended'])

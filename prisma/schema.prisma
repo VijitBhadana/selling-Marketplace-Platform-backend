@@ -15,6 +15,19 @@ enum Role {
   BUYER
   SELLER
   ADMIN
+  // Delivery partner: picks up delivery orders from shops near their chosen location.
+  DELIVERY
+}
+
+// Where a delivery order has reached on the delivery partner's side.
+enum DeliveryStatus {
+  // Waiting for a delivery partner near the shop to accept it.
+  SEARCHING
+  // A partner accepted it and is on the way to the shop.
+  ASSIGNED
+  // The partner collected it from the shop.
+  PICKED_UP
+  DELIVERED
 }
 
 enum ListingStatus {
@@ -107,6 +120,14 @@ enum NotificationType {
   FINANCE_DECISION
   // Broadcast from the admin panel to every buyer and/or seller.
   ANNOUNCEMENT
+  // Delivery partners: a delivery order was placed at a shop near their location.
+  DELIVERY_REQUEST
+  // Buyer and shop: the delivery partner collected the order from the shop...
+  ORDER_PICKED_UP
+  // ...and handed it over.
+  ORDER_DELIVERED
+  // Buyer and shop: a delivery partner accepted the order and is on the way to the shop.
+  DELIVERY_ASSIGNED
 }
 
 enum GlowLevel {
@@ -147,6 +168,11 @@ model User {
   isEmailVerified     Boolean           @default(false)
   emailOtpHash        String?
   emailOtpExpiresAt   DateTime?
+  // Seller KYC, required at seller sign-up. The Aadhaar number itself is never stored —
+  // only a keyed hash (for the uniqueness check) and its last 4 digits (for display).
+  aadhaarHash         String?           @unique
+  aadhaarLast4        String?
+  gstin               String?           @unique
   // Cash-on-delivery no-show enforcement (buyer-side only — see Order/no-show flow).
   isSuspended         Boolean           @default(false)
   suspendedAt         DateTime?
@@ -178,8 +204,49 @@ model User {
   notifications               Notification[]
   subscriptions               Subscription[]
   advertisementViews          AdvertisementView[]
+  deliveryProfile             DeliveryProfile?
+  deliveriesTaken             Order[]              @relation("OrderDeliveryPartner")
+  deliveryRejections          DeliveryRejection[]
 
   @@map("users")
+}
+
+// A delivery partner's sign-up papers and the area they take deliveries in.
+model DeliveryProfile {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address       String
+  // BIKE / SCOOTER / BICYCLE / E_RICKSHAW / AUTO / CAR — see auth/delivery-kyc.ts.
+  vehicleType   String
+  vehicleNumber String?
+  licenseNumber String   @unique
+  // Base64 data URLs of the driving licence and Aadhaar card photos — same storage
+  // approach as listing photos. Only the admin's user details ever return them.
+  licenseImage  String
+  aadhaarImage  String
+  // The location the partner set in their panel; delivery requests come from shops
+  // near it (see common/nearby.ts). Null until they set one.
+  city          String?
+  pincode       String?
+  latitude      Float?
+  longitude     Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("delivery_profiles")
+}
+
+// A delivery partner turned a request down, so it stops showing up for them.
+model DeliveryRejection {
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  partnerId String
+  partner   User     @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([orderId, partnerId])
+  @@index([partnerId])
+  @@map("delivery_rejections")
 }
 
 // A "Cloude" is a top-level sector grouping (Skill, Booking, Wedding, Jobs, etc.)
@@ -379,11 +446,23 @@ model Order {
 
   notifications Notification[]
 
+  // Delivery only (always paid online up front): a nearby delivery partner accepts it,
+  // picks it up from the shop and hands it over. Null for every other channel.
+  deliveryStatus     DeliveryStatus?
+  deliveryPartnerId  String?
+  deliveryPartner    User?               @relation("OrderDeliveryPartner", fields: [deliveryPartnerId], references: [id], onDelete: SetNull)
+  deliveryAcceptedAt DateTime?
+  pickedUpAt         DateTime?
+  deliveredAt        DateTime?
+  deliveryRejections DeliveryRejection[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([buyerId])
   @@index([sellerId])
+  @@index([deliveryStatus])
+  @@index([deliveryPartnerId])
   @@map("orders")
 }
 

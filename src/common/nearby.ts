@@ -48,6 +48,24 @@ export function listingNearWhere(near: NearQuery): Prisma.ListingWhereInput | un
   return or.length ? { OR: or } : undefined;
 }
 
+/**
+ * In-memory twin of listingNearWhere: does this shop fall in `near`'s area? Used to
+ * pick the delivery partners to alert about a new order without a query per partner.
+ */
+export function isListingNear(
+  near: NearQuery,
+  listing: { city?: string | null; pincode?: string | null; latitude?: number | null; longitude?: number | null },
+) {
+  if (near.city && listing.city?.toLowerCase().includes(near.city.toLowerCase())) return true;
+  const zone = pincodeZone(near.pincode);
+  if (zone && listing.pincode?.startsWith(zone)) return true;
+  if (near.lat != null && near.lng != null && listing.latitude != null && listing.longitude != null) {
+    const dLng = RADIUS_DEG_LAT / Math.max(Math.cos((near.lat * Math.PI) / 180), 0.2);
+    return Math.abs(listing.latitude - near.lat) <= RADIUS_DEG_LAT && Math.abs(listing.longitude - near.lng) <= dLng;
+  }
+  return false;
+}
+
 /** Jobs based in the visitor's city / pincode zone. Remote jobs suit everyone, so they always match. */
 export function jobNearWhere(near: NearQuery): Prisma.JobWhereInput | undefined {
   const or: Prisma.JobWhereInput[] = [];
