@@ -140,12 +140,15 @@ export class OrdersService {
 
     const paymentStatus = dto.paymentMethod === PaymentMethodDto.ONLINE ? 'PAID' : 'PENDING';
     const pickupEta = needsPickupEta ? new Date(Date.now() + dto.pickupEtaMinutes! * 60_000) : null;
+    const note = dto.note?.trim() || null;
 
     const orders = await this.prisma.$transaction(async (tx) => {
       const created: Awaited<ReturnType<typeof tx.order.create>>[] = [];
       for (const [listingId, items] of groupsByListing) {
         const sellerId = items[0].product.listing.sellerId;
         const isBooking = Boolean(kindOf(items[0]));
+        // Only the food shops in the bucket get the buyer's kitchen instructions.
+        const orderNote = items[0].product.listing.cloude?.slug === 'food' ? note : null;
 
         // A booking's price multiplies by its details (2 rooms × 3 nights = 6 units);
         // the unit is snapshotted into the details so later product edits don't change history.
@@ -173,6 +176,7 @@ export class OrdersService {
             pickupEta: isBooking ? bookingNoShowAfter(lines.map((line) => line.bookingDetails ?? {})) : pickupEta,
             address: !isBooking && dto.channel === OrderChannelDto.DELIVERY ? dto.address!.trim() : null,
             deliveryStatus: !isBooking && dto.channel === OrderChannelDto.DELIVERY ? 'SEARCHING' : null,
+            note: orderNote,
             paymentMethod: dto.paymentMethod as any,
             paymentStatus,
             totalAmount,
@@ -196,7 +200,7 @@ export class OrdersService {
             userId: sellerId,
             type: 'ORDER_PLACED',
             title: isBooking ? 'New booking received' : 'New order received',
-            body: `${buyer?.name ?? 'A buyer'} placed ${isBooking ? 'a booking' : 'an order'} worth ₹${totalAmount.toFixed(0)} at ${shopName}`,
+            body: `${buyer?.name ?? 'A buyer'} placed ${isBooking ? 'a booking' : 'an order'} worth ₹${totalAmount.toFixed(0)} at ${shopName}${orderNote ? ` — Note: "${orderNote}"` : ''}`,
             orderId: order.id,
           },
         });

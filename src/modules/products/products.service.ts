@@ -10,6 +10,7 @@ import { EDUCATION_CLOUDE_SLUG, normalizeEducationDetails } from './education-de
 import { FINANCING_CLOUDE_SLUG, normalizeFinanceDetails } from './finance-details';
 import { getBookingKind } from '../cart/booking-details';
 import { deleteProductsCascade } from './product-cleanup';
+import { canBeSecondHand, normalizeCondition } from './item-condition';
 
 const shopCategory = { cloude: { select: { slug: true } }, category: { select: { slug: true } } } as const;
 
@@ -31,10 +32,13 @@ export class ProductsService {
 
     return this.prisma.product.create({
       data: {
-        ...this.withTransportTerms(
+        ...this.withConditionTerms(
           listing,
-          this.withFinanceTerms(listing, this.withEducationTerms(listing, this.withClinicTerms(listing, this.withPropertyTerms(listing, dto)))),
-          true,
+          this.withTransportTerms(
+            listing,
+            this.withFinanceTerms(listing, this.withEducationTerms(listing, this.withClinicTerms(listing, this.withPropertyTerms(listing, dto)))),
+            true,
+          ),
         ),
         listingId,
       },
@@ -47,13 +51,17 @@ export class ProductsService {
     if (product.listing.sellerId !== sellerId) throw new ForbiddenException('Not your product');
     return this.prisma.product.update({
       where: { id },
-      data: this.withTransportTerms(
+      data: this.withConditionTerms(
         product.listing,
-        this.withFinanceTerms(
+        this.withTransportTerms(
           product.listing,
-          this.withEducationTerms(product.listing, this.withClinicTerms(product.listing, this.withPropertyTerms(product.listing, dto, product))),
+          this.withFinanceTerms(
+            product.listing,
+            this.withEducationTerms(product.listing, this.withClinicTerms(product.listing, this.withPropertyTerms(product.listing, dto, product))),
+          ),
+          false,
         ),
-        false,
+        product,
       ),
     });
   }
@@ -144,6 +152,23 @@ export class ProductsService {
       financeDetails: terms.financeDetails as Prisma.InputJsonObject,
       ...(terms.pricedProduct ? {} : { price: null, priceType: 'CONTACT_FOR_PRICE' as const }),
     };
+  }
+
+  /**
+   * Second hand / refurbished: only goods (not services) in shops where pre-owned items make
+   * sense can carry a condition — everything else is stored as new, so turning a used item
+   * into a service drops it. An edit that doesn't touch the condition keeps it as it is.
+   */
+  private withConditionTerms<T extends { condition?: string; isService?: boolean }>(
+    listing: { cloude: { slug: string }; category: { slug: string } },
+    dto: T,
+    current?: { isService: boolean },
+  ) {
+    const { condition, ...rest } = dto;
+    const isService = dto.isService ?? current?.isService ?? false;
+    if (!canBeSecondHand(listing.cloude.slug, listing.category.slug, isService)) return { ...rest, condition: null };
+    if (condition === undefined) return rest;
+    return { ...rest, condition: normalizeCondition(condition) };
   }
 
   /**

@@ -180,6 +180,7 @@ export class ListingsService {
               priceUnit: true,
               imageUrl: true,
               isService: true,
+              condition: true,
             },
             orderBy: { createdAt: 'desc' },
             take: 3,

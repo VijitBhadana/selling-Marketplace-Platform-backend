@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import { IsBoolean, IsEnum, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PRICE_UNITS } from '../cart/booking-details';
+import { ITEM_CONDITIONS } from './item-condition';
 import { PriceTypeDto } from '../listings/dto';
 
 export class CreateProductDto {
@@ -29,6 +30,12 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   isService?: boolean;
+
+  // Goods in shops where pre-owned items make sense — NEW, USED (second hand) or REFURBISHED.
+  // Dropped for services and other shops in ProductsService (see item-condition.ts).
+  @IsOptional()
+  @IsIn(ITEM_CONDITIONS)
+  condition?: string;
 
   // Booking Cloude only — what the price is per (night, hour, day, person...).
   @IsOptional()
@@ -93,6 +100,12 @@ export class UpdateProductDto {
   @IsOptional()
   @IsBoolean()
   isService?: boolean;
+
+  // Goods in shops where pre-owned items make sense — NEW, USED (second hand) or REFURBISHED.
+  // Dropped for services and other shops in ProductsService (see item-condition.ts).
+  @IsOptional()
+  @IsIn(ITEM_CONDITIONS)
+  condition?: string;
 
   // Booking Cloude only — what the price is per (night, hour, day, person...).
   @IsOptional()

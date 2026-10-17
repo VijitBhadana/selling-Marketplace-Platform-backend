@@ -383,6 +383,9 @@ model Product {
   // service (types, fields covered, session mode) or a new / used book. Null for anything else
   // (stationery...). See products/education-details.ts.
   educationDetails Json?
+  // Goods only (not services), in shops where pre-owned items make sense: USED (second hand)
+  // or REFURBISHED. Null means new. See products/item-condition.ts.
+  condition        String?
 
   listingId String
   listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
@@ -436,6 +439,8 @@ model Order {
   pickupEta DateTime?
   // Delivery only.
   address   String?
+  // Food Cloude only — the buyer's instructions for the kitchen (less spicy, no onion...).
+  note      String?
 
   paymentMethod PaymentMethod
   paymentStatus PaymentStatus @default(PENDING)

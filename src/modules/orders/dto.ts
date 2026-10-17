@@ -29,6 +29,12 @@ export class CheckoutDto {
   @MaxLength(500)
   address?: string;
 
+  // Food Cloude: instructions for the kitchen (less spicy, no onion...). Ignored for other shops.
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
+
   @IsEnum(PaymentMethodDto)
   paymentMethod: PaymentMethodDto;
 }
