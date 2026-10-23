@@ -78,3 +78,24 @@ export function isValidGstin(value: string) {
   }
   return GSTIN_CHARS[(36 - (sum % 36)) % 36] === gstin[14];
 }
+
+// PAN: 5 letters + 4 digits + 1 letter. There is no public checksum, but the 4th letter
+// is the holder type (P = person, C = company, F = firm, H = HUF, ...) and for a person
+// the 5th is their surname's initial — enough to reject most made-up numbers.
+const PAN_HOLDER_TYPES = new Set(['A', 'B', 'C', 'F', 'G', 'H', 'J', 'L', 'P', 'T']);
+
+export function normalizePan(value: string) {
+  return value.replace(/\s/g, '').toUpperCase();
+}
+
+export function isValidPan(value: string) {
+  const pan = normalizePan(value);
+  return /^[A-Z]{5}\d{4}[A-Z]$/.test(pan) && PAN_HOLDER_TYPES.has(pan[3]) && pan.slice(5, 9) !== '0000';
+}
+
+/** For a personal PAN, some word of the name must start with its 5th letter (name order varies). */
+export function panMatchesName(value: string, name: string) {
+  const pan = normalizePan(value);
+  const words = name.toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  return pan[3] !== 'P' || words.length < 2 || words.some((w) => w[0] === pan[4]);
+}

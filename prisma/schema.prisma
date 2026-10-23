@@ -173,6 +173,8 @@ model User {
   aadhaarHash         String?           @unique
   aadhaarLast4        String?
   gstin               String?           @unique
+  // Sellers without GST registration give their PAN instead (also kept when given with a GSTIN).
+  pan                 String?           @unique
   // Cash-on-delivery no-show enforcement (buyer-side only — see Order/no-show flow).
   isSuspended         Boolean           @default(false)
   suspendedAt         DateTime?

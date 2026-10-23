@@ -40,6 +40,12 @@ export class RegisterDto {
   @IsString()
   gstin?: string;
 
+  // Sellers give a GSTIN, or a PAN if they have no GST registration.
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.replace(/\s/g, '').toUpperCase() || undefined : value))
+  @IsString()
+  pan?: string;
+
   // Required only for DELIVERY sign-ups (Aadhaar number above too) — see AuthService.register.
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.replace(/[\s-]/g, '').toUpperCase() || undefined : value))

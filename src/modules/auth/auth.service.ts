@@ -6,7 +6,16 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { MailService } from '../../common/mail/mail.service';
 import { LoginDto, RegisterDto, ResendOtpDto, VerifyOtpDto } from './dto';
 import { ADMIN_EMAIL } from '../admin/admin-account';
-import { hashAadhaar, isValidAadhaar, isValidGstin, normalizeAadhaar, normalizeGstin } from './seller-kyc';
+import {
+  hashAadhaar,
+  isValidAadhaar,
+  isValidGstin,
+  isValidPan,
+  normalizeAadhaar,
+  normalizeGstin,
+  normalizePan,
+  panMatchesName,
+} from './seller-kyc';
 import { isImageDataUrl, isValidLicense, isValidVehicleNumber, normalizeLicense, normalizeVehicleNumber } from './delivery-kyc';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -21,8 +30,10 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
+    // A sign-up only becomes an account once its email OTP is verified. An unverified
+    // one can't log in, so signing up again with the same email just replaces it.
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (existing) throw new ConflictException('Email already registered');
+    if (existing?.isEmailVerified) throw new ConflictException('Email already registered');
     if (dto.email.trim().toLowerCase() === ADMIN_EMAIL) throw new ForbiddenException('This email cannot be used to sign up');
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
@@ -31,17 +42,32 @@ export class AuthService {
     // otherwise collide on the empty string and crash with a raw 500.
     const phone = dto.phone?.trim() || undefined;
 
-    // Sellers must give a valid Aadhaar and GSTIN (offline checksum checks only).
-    // Buyers' values, if any, are ignored.
-    let sellerKyc: { aadhaarHash: string; aadhaarLast4: string; gstin: string } | undefined;
+    // Sellers must give a valid Aadhaar, plus a GSTIN or (without GST) a PAN — offline
+    // checks only. Buyers' values, if any, are ignored.
+    let sellerKyc: { aadhaarHash: string; aadhaarLast4: string; gstin: string | null; pan: string | null } | undefined;
     if (dto.role === 'SELLER') {
       const aadhaar = this.checkAadhaar(dto.aadhaar, 'seller accounts');
-      if (!dto.gstin) throw new BadRequestException('GST number is required for seller accounts');
-      if (normalizeGstin(dto.gstin).length !== 15) throw new BadRequestException('GST number must be exactly 15 characters');
-      if (!isValidGstin(dto.gstin)) {
+      if (!dto.gstin && !dto.pan) throw new BadRequestException("Please enter your GST number — or your PAN if you don't have GST");
+      const gstin = dto.gstin ? normalizeGstin(dto.gstin) : null;
+      if (gstin && gstin.length !== 15) throw new BadRequestException('GST number must be exactly 15 characters');
+      if (gstin && !isValidGstin(gstin)) {
         throw new BadRequestException('This GST number is not valid. Please check it against your GST certificate.');
       }
-      sellerKyc = { aadhaarHash: hashAadhaar(aadhaar), aadhaarLast4: aadhaar.slice(-4), gstin: normalizeGstin(dto.gstin) };
+      const pan = dto.pan ? normalizePan(dto.pan) : null;
+      if (pan) {
+        if (pan.length !== 10) throw new BadRequestException('PAN must be exactly 10 characters');
+        if (!isValidPan(pan)) throw new BadRequestException('This PAN is not valid. Please check it against your PAN card.');
+        // A GSTIN carries its holder's PAN in characters 3–12.
+        if (gstin && gstin.slice(2, 12) !== pan) throw new BadRequestException('This PAN does not match your GST number');
+        if (!panMatchesName(pan, dto.name)) {
+          throw new BadRequestException("This PAN does not match your name — a personal PAN's 5th letter is your surname's first letter");
+        }
+        // A PAN-only sign-up can't reuse the PAN inside another seller's GSTIN.
+        if (!gstin && (await this.prisma.user.findFirst({ where: { isEmailVerified: true, gstin: { contains: pan } }, select: { id: true } }))) {
+          throw new ConflictException('This PAN is already registered with another seller');
+        }
+      }
+      sellerKyc = { aadhaarHash: hashAadhaar(aadhaar), aadhaarLast4: aadhaar.slice(-4), gstin, pan };
     }
 
     // Delivery partners: phone, Aadhaar (number + photo), driving licence (number + photo),
@@ -76,19 +102,34 @@ export class AuthService {
       };
     }
 
+    const kyc = sellerKyc ?? deliveryAadhaar;
     try {
-      const user = await this.prisma.user.create({
-        data: {
-          name: dto.name,
-          email: dto.email,
-          phone,
-          passwordHash,
-          role: (dto.role as any) ?? 'BUYER',
-          ...sellerKyc,
-          ...deliveryAadhaar,
-          ...(deliveryProfile ? { deliveryProfile: { create: deliveryProfile } } : {}),
-        },
+      await this.releaseFromUnverified({
+        phone,
+        aadhaarHash: kyc?.aadhaarHash,
+        gstin: sellerKyc?.gstin ?? undefined,
+        pan: sellerKyc?.pan ?? undefined,
+        licenseNumber: deliveryProfile?.licenseNumber,
       });
+
+      const data = {
+        name: dto.name,
+        email: dto.email,
+        phone: phone ?? null,
+        passwordHash,
+        role: (dto.role as any) ?? 'BUYER',
+        aadhaarHash: kyc?.aadhaarHash ?? null,
+        aadhaarLast4: kyc?.aadhaarLast4 ?? null,
+        gstin: sellerKyc?.gstin ?? null,
+        pan: sellerKyc?.pan ?? null,
+        ...(deliveryProfile ? { deliveryProfile: { create: deliveryProfile } } : {}),
+      };
+      const user = existing
+        ? await this.prisma.$transaction(async (tx) => {
+            await tx.deliveryProfile.deleteMany({ where: { userId: existing.id } });
+            return tx.user.update({ where: { id: existing.id }, data });
+          })
+        : await this.prisma.user.create({ data });
       await this.issueOtp(user.id, user.email);
       return { email: user.email, message: 'Registered. Enter the OTP sent to your email to verify your account.' };
     } catch (err) {
@@ -96,6 +137,7 @@ export class AuthService {
         const target = String(err.meta?.target ?? '');
         if (target.includes('aadhaarHash')) throw new ConflictException('This Aadhaar number is already registered with another account');
         if (target.includes('gstin')) throw new ConflictException('This GST number is already registered with another seller');
+        if (target.includes('pan')) throw new ConflictException('This PAN is already registered with another seller');
         if (target.includes('licenseNumber')) {
           throw new ConflictException('This driving licence is already registered with another delivery partner');
         }
@@ -103,6 +145,25 @@ export class AuthService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Frees a phone / Aadhaar / GSTIN / licence held by sign-ups that never verified their
+   * email — e.g. one made with a mistyped address — so they can't block the real account.
+   */
+  private async releaseFromUnverified(keys: { phone?: string; aadhaarHash?: string; gstin?: string; pan?: string; licenseNumber?: string }) {
+    const unverified = { isEmailVerified: false } as const;
+    await this.prisma.$transaction([
+      ...(keys.phone ? [this.prisma.user.updateMany({ where: { ...unverified, phone: keys.phone }, data: { phone: null } })] : []),
+      ...(keys.aadhaarHash
+        ? [this.prisma.user.updateMany({ where: { ...unverified, aadhaarHash: keys.aadhaarHash }, data: { aadhaarHash: null, aadhaarLast4: null } })]
+        : []),
+      ...(keys.gstin ? [this.prisma.user.updateMany({ where: { ...unverified, gstin: keys.gstin }, data: { gstin: null } })] : []),
+      ...(keys.pan ? [this.prisma.user.updateMany({ where: { ...unverified, pan: keys.pan }, data: { pan: null } })] : []),
+      ...(keys.licenseNumber
+        ? [this.prisma.deliveryProfile.deleteMany({ where: { licenseNumber: keys.licenseNumber, user: unverified } })]
+        : []),
+    ]);
   }
 
   /** Validates a seller's / delivery partner's Aadhaar number and returns its 12 digits. */
@@ -170,6 +231,20 @@ export class AuthService {
           ? 'Your account has been suspended by the DukanCloude admin. Please contact support.'
           : 'Your account has been suspended for repeated no-shows on Cash on Delivery orders.',
       );
+    }
+
+    // Not an account until the email OTP is verified. Send a fresh code (unless one went
+    // out in the last minute) and let the frontend take them to the OTP screen.
+    if (!user.isEmailVerified) {
+      const sentAt = user.emailOtpExpiresAt ? user.emailOtpExpiresAt.getTime() - OTP_TTL_MS : 0;
+      if (Date.now() - sentAt >= OTP_RESEND_COOLDOWN_MS) {
+        await this.issueOtp(user.id, user.email).catch(() => undefined); // the OTP screen has "Resend"
+      }
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Please verify your email first — we sent a 6-digit code to your inbox.',
+      });
     }
 
     return this.buildAuthResponse(user);

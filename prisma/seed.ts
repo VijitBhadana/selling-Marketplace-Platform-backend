@@ -385,7 +385,7 @@ const cloudes = [
     description: 'Farming inputs, fresh vegetables and fruits for farmers and buyers.',
     icon: 'Leaf',
     categories: [
-      'Vegetables',
+      'Vegetables (Onion, Potato, Tomato...)',
       'Fresh Fruits',
       'Street Vendor',
       'Pushcart (Thela) Vendor',
