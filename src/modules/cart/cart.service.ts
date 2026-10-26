@@ -4,6 +4,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { getPropertyType } from '../products/property-details';
 import { isExpiredMedicine } from '../products/clinic-details';
 import { getBookingKind, getRentSubject, normalizeBookingDetails } from './booking-details';
+import { MAX_CART_QUANTITY } from './dto';
 
 const cartItemInclude = {
   product: { include: { listing: { include: { cloude: true, category: { select: { slug: true, name: true } } } } } },
@@ -26,14 +27,34 @@ export class CartService {
 
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
-      include: { listing: { select: { cloude: { select: { slug: true } }, category: { select: { slug: true } } } } },
+      include: {
+        listing: {
+          select: {
+            sellerId: true,
+            status: true,
+            seller: { select: { suspendedBy: true } },
+            cloude: { select: { slug: true } },
+            category: { select: { slug: true } },
+          },
+        },
+      },
     });
     if (!product) throw new NotFoundException('Product not found');
+    if (product.listing.status !== 'ACTIVE' || product.listing.seller.suspendedBy === 'ADMIN') {
+      throw new BadRequestException('This shop is not taking orders right now.');
+    }
+    // Self-orders would fake completed orders and let a seller rate their own shop.
+    if (product.listing.sellerId === userId) throw new BadRequestException("You can't order from your own shop.");
     if (isExpiredMedicine(product.clinicDetails)) throw new BadRequestException('This medicine is past its expiry date.');
 
     // Booking Cloude: one booking = one set of details. Booking the same product
     // again replaces the details instead of stacking quantity.
     const kind = getBookingKind(product.listing.cloude?.slug, product.listing.category?.slug);
+    // No price ("contact for price") means nothing to charge — it would check out as ₹0.
+    // Transport bookings are priced from the seller's rates instead.
+    if (product.price == null && kind !== 'TRANSPORT') {
+      throw new BadRequestException('This item has no fixed price — chat with the seller to agree one.');
+    }
     if (kind) {
       const propertyType = getPropertyType(product.listing.cloude?.slug, product.listing.category?.slug);
       const rentSubject = getRentSubject(product.listing.cloude?.slug, product.listing.category?.slug);
@@ -50,9 +71,12 @@ export class CartService {
       where: { userId_productId: { userId, productId } },
     });
 
+    const total = (existing?.quantity ?? 0) + quantity;
+    if (total > MAX_CART_QUANTITY) throw new BadRequestException(`You can add at most ${MAX_CART_QUANTITY} of one item.`);
+
     return this.prisma.cartItem.upsert({
       where: { userId_productId: { userId, productId } },
-      update: { quantity: (existing?.quantity ?? 0) + quantity },
+      update: { quantity: total },
       create: { userId, productId, quantity },
       include: cartItemInclude,
     });

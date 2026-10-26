@@ -203,8 +203,14 @@ export class FinanceService {
           throw new BadRequestException(`This scheme needs a monthly income of at least ${money(Number(details.minMonthlyIncome))}.`);
         }
       }
-      if (details.minCreditScore != null && dto.creditScore != null && dto.creditScore < Number(details.minCreditScore)) {
-        throw new BadRequestException(`This scheme needs a CIBIL score of at least ${details.minCreditScore}.`);
+      // Like the income floor: a cut-off can't be met by leaving the score blank.
+      if (details.minCreditScore != null) {
+        if (dto.creditScore == null) {
+          throw new BadRequestException(`Please enter your CIBIL score — this scheme needs at least ${details.minCreditScore}.`);
+        }
+        if (dto.creditScore < Number(details.minCreditScore)) {
+          throw new BadRequestException(`This scheme needs a CIBIL score of at least ${details.minCreditScore}.`);
+        }
       }
     }
 

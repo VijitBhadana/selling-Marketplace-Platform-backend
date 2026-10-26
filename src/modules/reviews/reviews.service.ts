@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateReviewDto, RateOrderDto, ReportSellerDto } from './dto';
 
@@ -8,13 +8,23 @@ export class ReviewsService {
 
   // Ratings rank shops on the home page, so only a buyer who actually received an
   // order from this seller (and shop, if given) may leave one.
+  // One rating per buyer per shop (or per seller, when no shop is named) — rating again
+  // updates it, so one order can't be turned into a pile of votes.
   async createReview(authorId: string, dto: CreateReviewDto) {
+    if (dto.targetId === authorId) throw new BadRequestException("You can't rate yourself.");
     const bought = await this.prisma.order.findFirst({
       where: { buyerId: authorId, sellerId: dto.targetId, status: 'COMPLETED', ...(dto.listingId ? { listingId: dto.listingId } : {}) },
       select: { id: true },
     });
     if (!bought) throw new ForbiddenException('You can rate a seller only after receiving an order from them.');
-    return this.prisma.review.create({ data: { ...dto, authorId } });
+
+    const existing = await this.prisma.review.findFirst({
+      where: dto.listingId ? { authorId, listingId: dto.listingId } : { authorId, targetId: dto.targetId },
+      select: { id: true },
+    });
+    return existing
+      ? this.prisma.review.update({ where: { id: existing.id }, data: { rating: dto.rating, comment: dto.comment ?? null } })
+      : this.prisma.review.create({ data: { ...dto, authorId } });
   }
 
   /**
@@ -51,7 +61,13 @@ export class ReviewsService {
   }
 
   // "178 Sellers Reporting" style seller-reporting mechanism from the wireframes.
-  reportSeller(reporterId: string, dto: ReportSellerDto) {
+  // Every report lowers the seller's trust score, so each account gets one report per seller.
+  async reportSeller(reporterId: string, dto: ReportSellerDto) {
+    if (dto.sellerId === reporterId) throw new BadRequestException("You can't report yourself.");
+    const seller = await this.prisma.user.findUnique({ where: { id: dto.sellerId }, select: { id: true } });
+    if (!seller) throw new NotFoundException('Seller not found');
+    const already = await this.prisma.sellerReport.findFirst({ where: { reporterId, sellerId: dto.sellerId }, select: { id: true } });
+    if (already) throw new ConflictException('You have already reported this seller.');
     return this.prisma.sellerReport.create({ data: { ...dto, reporterId } });
   }
 

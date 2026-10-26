@@ -16,7 +16,12 @@ export class JobsController {
     return this.jobsService.findAll(query);
   }
 
-  // Static routes are declared before ':id' so "mine" / "applications" aren't read as job ids.
+  // Static routes are declared before ':id' so "sitemap" / "mine" / "applications" aren't read as job ids.
+  @Get('sitemap')
+  sitemap() {
+    return this.jobsService.sitemapEntries();
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('mine')
   findMine(@Req() req: any) {

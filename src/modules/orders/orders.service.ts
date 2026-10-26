@@ -13,6 +13,7 @@ import {
 import { CheckoutDto, OrderChannelDto, PaymentMethodDto } from './dto';
 import { notifyNearbyDeliveryPartners } from '../delivery/dispatch';
 import { maskLicense } from '../auth/delivery-kyc';
+import { isExpiredMedicine } from '../products/clinic-details';
 
 const orderInclude = {
   items: true,
@@ -60,12 +61,41 @@ export class OrdersService {
 
     const cartItems = await this.prisma.cartItem.findMany({
       where: { userId: buyerId },
-      include: { product: { include: { listing: { include: { cloude: true, category: { select: { slug: true } } } } } } },
+      include: {
+        product: {
+          include: { listing: { include: { cloude: true, category: { select: { slug: true } }, seller: { select: { suspendedBy: true } } } } },
+        },
+      },
     });
     if (cartItems.length === 0) throw new BadRequestException('Your bucket list is empty.');
 
     const kindOf = (item: (typeof cartItems)[number]) =>
       getBookingKind(item.product.listing.cloude?.slug, item.product.listing.category?.slug);
+
+    // Items added before the cart blocked self-orders.
+    const ownItem = cartItems.find((item) => item.product.listing.sellerId === buyerId);
+    if (ownItem) throw new BadRequestException(`"${ownItem.product.name}" is from your own shop — remove it from your bucket list.`);
+
+    // A "contact for price" item has no price to charge; it would otherwise go through as ₹0.
+    // Transport bookings are priced from the seller's rates instead (transportQuote).
+    const unpriced = cartItems.find((item) => item.product.price == null && kindOf(item) !== 'TRANSPORT');
+    if (unpriced) {
+      throw new BadRequestException(`"${unpriced.product.name}" has no fixed price — chat with the seller, then remove it from your bucket list.`);
+    }
+
+    // Re-checked here, not only when the item went into the bucket: since then the shop may
+    // have been taken down, its seller suspended by the admin, or a medicine may have expired.
+    const closed = cartItems.find(
+      (item) => item.product.listing.status !== 'ACTIVE' || item.product.listing.seller.suspendedBy === 'ADMIN',
+    );
+    if (closed) {
+      const shop = closed.product.listing.shopName || closed.product.listing.title;
+      throw new BadRequestException(`${shop} is not taking orders right now — remove "${closed.product.name}" from your bucket list.`);
+    }
+    const expired = cartItems.find((item) => isExpiredMedicine(item.product.clinicDetails));
+    if (expired) {
+      throw new BadRequestException(`"${expired.product.name}" is past its expiry date — remove it from your bucket list.`);
+    }
 
     // Booking Cloude items added before the booking form existed have no details yet.
     const missingDetails = cartItems.find((item) => !item.bookingDetails && kindOf(item));

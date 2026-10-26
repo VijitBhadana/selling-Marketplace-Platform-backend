@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { PUBLICLY_VISIBLE_USER } from '../../common/visibility';
 
 const EPOCH = new Date(0);
+
+// Only products buyers can actually open: live shops of sellers the admin hasn't suspended.
+const LIVE_PRODUCT: Prisma.ProductWhereInput = { listing: { status: 'ACTIVE', seller: PUBLICLY_VISIBLE_USER } };
 
 @Injectable()
 export class NotificationsService {
@@ -45,6 +50,7 @@ export class NotificationsService {
         },
       }),
       this.prisma.product.findMany({
+        where: LIVE_PRODUCT,
         orderBy: { createdAt: 'desc' },
         take: 30,
         include: { listing: { select: { id: true, shopName: true, title: true, coverImageUrl: true } } },
@@ -81,7 +87,7 @@ export class NotificationsService {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { notificationsSeenAt: true } });
     const seenAt = user?.notificationsSeenAt ?? EPOCH;
     const [newProducts, unreadAlerts] = await Promise.all([
-      this.prisma.product.count({ where: { createdAt: { gt: seenAt } } }),
+      this.prisma.product.count({ where: { ...LIVE_PRODUCT, createdAt: { gt: seenAt } } }),
       this.prisma.notification.count({ where: { userId, read: false } }),
     ]);
     return { count: newProducts + unreadAlerts };

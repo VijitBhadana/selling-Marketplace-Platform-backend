@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { UpdateProfileDto } from './dto';
 
 @Injectable()
 export class UsersService {
@@ -22,11 +23,12 @@ export class UsersService {
     return { ok: true };
   }
 
+  // Public profile — anyone can call this without logging in, so no email or phone.
   async findById(id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: {
-        id: true, name: true, email: true, phone: true, avatarUrl: true,
+        id: true, name: true, avatarUrl: true,
         role: true, city: true, pincode: true, isPhoneVerified: true, createdAt: true,
       },
     });
@@ -34,7 +36,13 @@ export class UsersService {
     return user;
   }
 
-  async updateProfile(id: string, data: { name?: string; city?: string; pincode?: string; avatarUrl?: string }) {
-    return this.prisma.user.update({ where: { id }, data });
+  async updateProfile(id: string, dto: UpdateProfileDto) {
+    const { name, city, pincode, avatarUrl } = dto;
+    return this.prisma.user.update({
+      where: { id },
+      data: { name, city, pincode, avatarUrl },
+      // Never the password / OTP / Aadhaar hashes.
+      select: { id: true, name: true, email: true, role: true, city: true, pincode: true, avatarUrl: true },
+    });
   }
 }

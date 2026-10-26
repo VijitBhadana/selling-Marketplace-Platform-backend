@@ -167,6 +167,16 @@ export class JobsService {
     return { deleted: count };
   }
 
+  // Feeds the frontend's sitemap.xml — open jobs only, ids and slugs only.
+  sitemapEntries() {
+    return this.prisma.job.findMany({
+      where: { isClosed: false, postedBy: PUBLICLY_VISIBLE_USER },
+      select: { id: true, updatedAt: true, category: { select: { slug: true, cloude: { select: { slug: true } } } } },
+      orderBy: { updatedAt: 'desc' },
+      take: 45000,
+    });
+  }
+
   async findOne(id: string) {
     const job = await this.prisma.job.findFirst({ where: { id, postedBy: PUBLICLY_VISIBLE_USER }, include: jobInclude });
     if (!job) throw new NotFoundException('Job not found');
@@ -176,10 +186,10 @@ export class JobsService {
   async apply(jobId: string, applicantId: string, dto: ApplyJobDto) {
     const job = await this.prisma.job.findFirst({
       where: { id: jobId, postedBy: PUBLICLY_VISIBLE_USER },
-      select: { id: true, title: true, postedById: true, isClosed: true },
+      select: { id: true, title: true, postedById: true, isClosed: true, isFilled: true },
     });
     if (!job) throw new NotFoundException('Job not found');
-    if (job.isClosed) throw new BadRequestException('This job is no longer accepting applications.');
+    if (job.isClosed || job.isFilled) throw new BadRequestException('This job is no longer accepting applications.');
     if (job.postedById === applicantId) throw new BadRequestException("You can't apply to your own job post.");
 
     const existing = await this.prisma.jobApplication.findUnique({

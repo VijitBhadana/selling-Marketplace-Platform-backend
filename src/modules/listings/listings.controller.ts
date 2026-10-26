@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { parseNear } from '../../common/nearby';
-import { CreateListingDto, FreshQueryDto, ListingQueryDto } from './dto';
+import { CreateListingDto, FreshQueryDto, ListingQueryDto, UpdateListingDto, UpdateListingStatusDto } from './dto';
 import { ListingsService } from './listings.service';
 
 @ApiTags('listings')
@@ -64,13 +64,13 @@ export class ListingsController {
 
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
-  update(@Req() req: any, @Param('id') id: string, @Body() dto: Partial<CreateListingDto>) {
+  update(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateListingDto) {
     return this.listingsService.update(id, req.user.userId, dto);
   }
 
   @UseGuards(JwtAuthGuard)
   @Patch(':id/status')
-  updateStatus(@Req() req: any, @Param('id') id: string, @Body() body: { status: 'SOLD' | 'BOOKED' | 'ACTIVE' | 'REMOVED' }) {
-    return this.listingsService.markStatus(id, req.user.userId, body.status);
+  updateStatus(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateListingStatusDto) {
+    return this.listingsService.markStatus(id, req.user.userId, dto.status);
   }
 }

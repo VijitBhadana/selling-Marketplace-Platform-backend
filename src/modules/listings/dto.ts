@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsEnum, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsEnum, IsIn, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { PartialType } from '@nestjs/swagger';
 
 export enum PriceTypeDto {
   FIXED = 'FIXED',
@@ -31,6 +32,7 @@ export class CreateListingDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0)
   price?: number;
 
   @IsOptional()
@@ -61,6 +63,18 @@ export class CreateListingDto {
   @IsOptional()
   @IsArray()
   images?: string[];
+}
+
+// A real class (not `Partial<CreateListingDto>`, which is erased at runtime) so the
+// ValidationPipe checks edits too: same rules as create, every field optional, and
+// anything else — sellerId, status, id… — is rejected.
+export class UpdateListingDto extends PartialType(CreateListingDto) {}
+
+export const SELLER_LISTING_STATUSES = ['SOLD', 'BOOKED', 'ACTIVE', 'REMOVED'] as const;
+
+export class UpdateListingStatusDto {
+  @IsIn(SELLER_LISTING_STATUSES)
+  status: (typeof SELLER_LISTING_STATUSES)[number];
 }
 
 export class ListingQueryDto {

@@ -5,7 +5,7 @@ import { jobNearWhere, listingNearWhere, parseNear, type NearQuery } from '../..
 import { scoreListings, scoreSellers, type Rating } from '../../common/seller-score';
 import { PUBLICLY_VISIBLE_USER } from '../../common/visibility';
 import { deleteListingsCascade } from '../products/product-cleanup';
-import { CreateListingDto, ListingQueryDto } from './dto';
+import { CreateListingDto, ListingQueryDto, UpdateListingDto } from './dto';
 
 @Injectable()
 export class ListingsService {
@@ -228,10 +228,11 @@ export class ListingsService {
 
   // Feeds the frontend's sitemap.xml — ids only, since images/relations can
   // carry large base64 photos. 45k stays under the 50k-URL sitemap limit.
+  // The category/Cloude slugs let the sitemap skip category pages with no shops.
   sitemapEntries() {
     return this.prisma.listing.findMany({
       where: { status: 'ACTIVE', seller: PUBLICLY_VISIBLE_USER },
-      select: { id: true, updatedAt: true },
+      select: { id: true, updatedAt: true, category: { select: { slug: true, cloude: { select: { slug: true } } } } },
       orderBy: { updatedAt: 'desc' },
       take: 45000,
     });
@@ -239,7 +240,8 @@ export class ListingsService {
 
   async findOne(id: string) {
     const listing = await this.prisma.listing.findFirst({
-      where: { id, seller: PUBLICLY_VISIBLE_USER },
+      // A shop its seller took down is gone for everyone (sold / booked ads stay viewable).
+      where: { id, status: { not: 'REMOVED' }, seller: PUBLICLY_VISIBLE_USER },
       include: {
         cloude: true,
         category: true,
@@ -259,7 +261,7 @@ export class ListingsService {
     return listing;
   }
 
-  async update(id: string, sellerId: string, data: Partial<CreateListingDto>) {
+  async update(id: string, sellerId: string, data: UpdateListingDto) {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellerId !== sellerId) throw new ForbiddenException('Not your listing');

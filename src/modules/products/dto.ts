@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PRICE_UNITS } from '../cart/booking-details';
 import { ITEM_CONDITIONS } from './item-condition';
 import { PriceTypeDto } from '../listings/dto';
@@ -17,6 +17,7 @@ export class CreateProductDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0)
   price?: number;
 
   @IsOptional()
@@ -87,6 +88,7 @@ export class UpdateProductDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0)
   price?: number;
 
   @IsOptional()

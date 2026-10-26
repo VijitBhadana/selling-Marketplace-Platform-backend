@@ -1,9 +1,18 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { MailService } from '../../common/mail/mail.service';
+import { AttemptLimiter } from '../../common/attempt-limiter';
 import { LoginDto, RegisterDto, ResendOtpDto, VerifyOtpDto } from './dto';
 import { ADMIN_EMAIL } from '../admin/admin-account';
 import {
@@ -20,9 +29,19 @@ import { isImageDataUrl, isValidLicense, isValidVehicleNumber, normalizeLicense,
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+// Guesses allowed against one OTP before it is burnt and a new one must be requested.
+const MAX_OTP_ATTEMPTS = 5;
+// Wrong passwords allowed per email before login is paused for the rest of the window.
+const MAX_LOGIN_ATTEMPTS = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+const emailKey = (email: string) => email.trim().toLowerCase();
 
 @Injectable()
 export class AuthService {
+  private readonly otpAttempts = new AttemptLimiter(MAX_OTP_ATTEMPTS, OTP_TTL_MS);
+  private readonly loginAttempts = new AttemptLimiter(MAX_LOGIN_ATTEMPTS, LOGIN_WINDOW_MS);
+
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
@@ -32,9 +51,12 @@ export class AuthService {
   async register(dto: RegisterDto) {
     // A sign-up only becomes an account once its email OTP is verified. An unverified
     // one can't log in, so signing up again with the same email just replaces it.
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    // Emails are case-insensitive ("Asha@X.com" is the same inbox as "asha@x.com"), so new
+    // accounts are stored in lower case and matched against older ones in any case.
+    const email = emailKey(dto.email);
+    const existing = await this.findByEmail(email);
     if (existing?.isEmailVerified) throw new ConflictException('Email already registered');
-    if (dto.email.trim().toLowerCase() === ADMIN_EMAIL) throw new ForbiddenException('This email cannot be used to sign up');
+    if (email === ADMIN_EMAIL) throw new ForbiddenException('This email cannot be used to sign up');
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     // An empty phone string (left blank on the sign-up form) must become `undefined`,
@@ -114,7 +136,7 @@ export class AuthService {
 
       const data = {
         name: dto.name,
-        email: dto.email,
+        email,
         phone: phone ?? null,
         passwordHash,
         role: (dto.role as any) ?? 'BUYER',
@@ -166,6 +188,18 @@ export class AuthService {
     ]);
   }
 
+  /**
+   * The account for an email, whatever case it is typed or was saved in (older accounts
+   * kept the capitals they signed up with). If two old sign-ups differ only in case, the
+   * verified one wins, then the oldest.
+   */
+  private findByEmail(email: string) {
+    return this.prisma.user.findFirst({
+      where: { email: { equals: email.trim(), mode: 'insensitive' } },
+      orderBy: [{ isEmailVerified: 'desc' }, { createdAt: 'asc' }],
+    });
+  }
+
   /** Validates a seller's / delivery partner's Aadhaar number and returns its 12 digits. */
   private checkAadhaar(value: string | undefined, who: string) {
     if (!value) throw new BadRequestException(`Aadhaar number is required for ${who}`);
@@ -177,7 +211,9 @@ export class AuthService {
   }
 
   async verifyOtp(dto: VerifyOtpDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    // Counted before the lookup and the (slow) hash check, so parallel guesses can't slip past.
+    const attempts = this.otpAttempts.attempt(emailKey(dto.email), () => 'Too many wrong codes. Please request a new OTP.');
+    const user = await this.findByEmail(dto.email);
     if (!user) throw new BadRequestException('Invalid email or OTP');
     if (user.isEmailVerified) throw new BadRequestException('Email is already verified');
     if (!user.emailOtpHash || !user.emailOtpExpiresAt || user.emailOtpExpiresAt < new Date()) {
@@ -185,7 +221,15 @@ export class AuthService {
     }
 
     const valid = await bcrypt.compare(dto.otp, user.emailOtpHash);
-    if (!valid) throw new BadRequestException('Invalid email or OTP');
+    if (!valid) {
+      if (attempts >= MAX_OTP_ATTEMPTS) {
+        // Burn this code — only a freshly sent one (Resend) can verify the account now.
+        await this.prisma.user.update({ where: { id: user.id }, data: { emailOtpHash: null, emailOtpExpiresAt: null } });
+        throw new HttpException('Too many wrong codes. Please request a new OTP.', HttpStatus.TOO_MANY_REQUESTS);
+      }
+      throw new BadRequestException('Invalid email or OTP');
+    }
+    this.otpAttempts.reset(emailKey(dto.email));
 
     const verified = await this.prisma.user.update({
       where: { id: user.id },
@@ -195,7 +239,7 @@ export class AuthService {
   }
 
   async resendOtp(dto: ResendOtpDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const user = await this.findByEmail(dto.email);
     if (!user) throw new BadRequestException('Invalid email');
     if (user.isEmailVerified) throw new BadRequestException('Email is already verified');
 
@@ -215,15 +259,23 @@ export class AuthService {
       where: { id: userId },
       data: { emailOtpHash, emailOtpExpiresAt: new Date(Date.now() + OTP_TTL_MS) },
     });
+    // A new code gets its own allowance of guesses.
+    this.otpAttempts.reset(emailKey(email));
     await this.mail.sendOtpEmail(email, otp);
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    // Counted before any await, so a burst of parallel guesses is capped too.
+    this.loginAttempts.attempt(
+      emailKey(dto.email),
+      (minutes) => `Too many failed login attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+    );
+    const user = await this.findByEmail(dto.email);
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
+    this.loginAttempts.reset(emailKey(dto.email));
 
     if (user.isSuspended) {
       throw new ForbiddenException(
