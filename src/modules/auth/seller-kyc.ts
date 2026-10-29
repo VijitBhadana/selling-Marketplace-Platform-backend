@@ -1,4 +1,5 @@
 import { createHmac } from 'crypto';
+import { requireSecret } from '../../common/env';
 
 // Level-1 (offline) checks for the seller sign-up KYC fields. These catch typos and
 // made-up numbers whose checksum doesn't add up — they do NOT prove the number is
@@ -50,7 +51,9 @@ export function isValidAadhaar(value: string) {
 // hash instead. Keep AADHAAR_HASH_SECRET fixed once set — changing it breaks the
 // duplicate check against existing sellers.
 export function hashAadhaar(value: string) {
-  const secret = process.env.AADHAAR_HASH_SECRET ?? process.env.JWT_SECRET ?? 'dev-secret';
+  // Falls back to JWT_SECRET, which in production must be a real secret (requireSecret
+  // throws there otherwise) — so Aadhaar hashes are never keyed with a public default.
+  const secret = process.env.AADHAAR_HASH_SECRET ?? requireSecret('JWT_SECRET', 'dev-secret');
   return createHmac('sha256', secret).update(normalizeAadhaar(value)).digest('hex');
 }
 

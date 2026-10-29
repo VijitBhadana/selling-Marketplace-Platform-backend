@@ -34,6 +34,12 @@ const MAX_OTP_ATTEMPTS = 5;
 // Wrong passwords allowed per email before login is paused for the rest of the window.
 const MAX_LOGIN_ATTEMPTS = 10;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+// Each sign-up / OTP-resend fires an OTP email. Per address, a few an hour stops anyone
+// flooding one victim's inbox; per IP, a generous cap stops mass spraying from one machine
+// without locking out a college / office Wi-Fi where many real people share an IP.
+const MAX_OTP_EMAILS_PER_ADDRESS = 5;
+const MAX_OTP_EMAILS_PER_IP = 60;
+const OTP_EMAIL_WINDOW_MS = 60 * 60 * 1000;
 
 const emailKey = (email: string) => email.trim().toLowerCase();
 
@@ -41,6 +47,8 @@ const emailKey = (email: string) => email.trim().toLowerCase();
 export class AuthService {
   private readonly otpAttempts = new AttemptLimiter(MAX_OTP_ATTEMPTS, OTP_TTL_MS);
   private readonly loginAttempts = new AttemptLimiter(MAX_LOGIN_ATTEMPTS, LOGIN_WINDOW_MS);
+  private readonly otpEmailsPerAddress = new AttemptLimiter(MAX_OTP_EMAILS_PER_ADDRESS, OTP_EMAIL_WINDOW_MS);
+  private readonly otpEmailsPerIp = new AttemptLimiter(MAX_OTP_EMAILS_PER_IP, OTP_EMAIL_WINDOW_MS);
 
   constructor(
     private prisma: PrismaService,
@@ -48,7 +56,7 @@ export class AuthService {
     private mail: MailService,
   ) {}
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, ip?: string) {
     // A sign-up only becomes an account once its email OTP is verified. An unverified
     // one can't log in, so signing up again with the same email just replaces it.
     // Emails are case-insensitive ("Asha@X.com" is the same inbox as "asha@x.com"), so new
@@ -123,6 +131,10 @@ export class AuthService {
         aadhaarImage: dto.aadhaarImage!,
       };
     }
+
+    // Counted only now, once the form is valid and an OTP email is about to go out — so
+    // typos on the sign-up form don't use up anyone's allowance.
+    this.limitOtpEmails(email, ip);
 
     const kyc = sellerKyc ?? deliveryAadhaar;
     try {
@@ -238,7 +250,7 @@ export class AuthService {
     return this.buildAuthResponse(verified);
   }
 
-  async resendOtp(dto: ResendOtpDto) {
+  async resendOtp(dto: ResendOtpDto, ip?: string) {
     const user = await this.findByEmail(dto.email);
     if (!user) throw new BadRequestException('Invalid email');
     if (user.isEmailVerified) throw new BadRequestException('Email is already verified');
@@ -248,8 +260,19 @@ export class AuthService {
       throw new BadRequestException('Please wait a minute before requesting another OTP');
     }
 
+    // Resend fires an OTP email too, so it draws on the same allowance as sign-up.
+    this.limitOtpEmails(user.email, ip);
     await this.issueOtp(user.id, user.email);
     return { message: 'A new OTP has been sent to your email.' };
+  }
+
+  /** Counts one OTP email against its address and the caller's IP; throws 429 past either cap. */
+  private limitOtpEmails(email: string, ip?: string) {
+    const tooMany = (minutes: number) =>
+      `Too many verification codes requested. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+    // IP first: a request blocked by the broad network cap doesn't use up the address's allowance.
+    if (ip) this.otpEmailsPerIp.attempt(`ip:${ip}`, tooMany);
+    this.otpEmailsPerAddress.attempt(emailKey(email), tooMany);
   }
 
   private async issueOtp(userId: string, email: string) {

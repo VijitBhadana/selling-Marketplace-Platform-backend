@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards, Get, Req } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Get, Req, Ip } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto, ResendOtpDto, VerifyOtpDto } from './dto';
@@ -10,8 +10,8 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  register(@Body() dto: RegisterDto, @Ip() ip: string) {
+    return this.authService.register(dto, ip);
   }
 
   @Post('verify-otp')
@@ -20,8 +20,8 @@ export class AuthController {
   }
 
   @Post('resend-otp')
-  resendOtp(@Body() dto: ResendOtpDto) {
-    return this.authService.resendOtp(dto);
+  resendOtp(@Body() dto: ResendOtpDto, @Ip() ip: string) {
+    return this.authService.resendOtp(dto, ip);
   }
 
   @Post('login')

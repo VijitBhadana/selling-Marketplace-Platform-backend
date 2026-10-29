@@ -23,22 +23,26 @@ export class CartService {
   }
 
   async add(userId: string, productId: string, quantity = 1, bookingDetails?: Record<string, unknown>) {
-    await this.assertNotSuspended(userId);
-
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-      include: {
-        listing: {
-          select: {
-            sellerId: true,
-            status: true,
-            seller: { select: { suspendedBy: true } },
-            cloude: { select: { slug: true } },
-            category: { select: { slug: true } },
+    // Independent lookups, so they run together instead of one database round-trip after
+    // another (this was the slowest endpoint under load). Only the suspension check throws.
+    const [, product, existing] = await Promise.all([
+      this.assertNotSuspended(userId),
+      this.prisma.product.findUnique({
+        where: { id: productId },
+        include: {
+          listing: {
+            select: {
+              sellerId: true,
+              status: true,
+              seller: { select: { suspendedBy: true } },
+              cloude: { select: { slug: true } },
+              category: { select: { slug: true } },
+            },
           },
         },
-      },
-    });
+      }),
+      this.prisma.cartItem.findUnique({ where: { userId_productId: { userId, productId } } }),
+    ]);
     if (!product) throw new NotFoundException('Product not found');
     if (product.listing.status !== 'ACTIVE' || product.listing.seller.suspendedBy === 'ADMIN') {
       throw new BadRequestException('This shop is not taking orders right now.');
@@ -66,10 +70,6 @@ export class CartService {
         include: cartItemInclude,
       });
     }
-
-    const existing = await this.prisma.cartItem.findUnique({
-      where: { userId_productId: { userId, productId } },
-    });
 
     const total = (existing?.quantity ?? 0) + quantity;
     if (total > MAX_CART_QUANTITY) throw new BadRequestException(`You can add at most ${MAX_CART_QUANTITY} of one item.`);

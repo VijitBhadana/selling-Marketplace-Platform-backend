@@ -2,7 +2,11 @@
 // Database: PostgreSQL (hosted on Supabase)
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Loads nested `include`/`select` relations in one SQL query (LATERAL joins) instead of
+  // one query per relation level. Every query is a network round-trip to Supabase, so this
+  // cuts latency on the include-heavy endpoints (cart, checkout, orders).
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {

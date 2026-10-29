@@ -1,11 +1,14 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { requireSecret } from '../../common/env';
 
 // The platform has exactly one admin. It is never created through sign-up;
 // the backend makes sure the account exists every time it starts.
-export const ADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? 'admin@gmail.com').toLowerCase();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'Admin@123';
+// Credentials must be set via env in production — see requireSecret: the backend
+// refuses to boot there rather than fall back to the public dev default below.
+export const ADMIN_EMAIL = requireSecret('ADMIN_EMAIL', 'admin@gmail.com').toLowerCase();
+const ADMIN_PASSWORD = requireSecret('ADMIN_PASSWORD', 'Admin@123');
 
 @Injectable()
 export class AdminAccountSeeder implements OnApplicationBootstrap {

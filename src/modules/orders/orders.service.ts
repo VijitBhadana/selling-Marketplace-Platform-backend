@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
@@ -173,6 +173,14 @@ export class OrdersService {
     const note = dto.note?.trim() || null;
 
     const orders = await this.prisma.$transaction(async (tx) => {
+      // Claim the exact cart rows read above before creating anything. A second checkout
+      // racing this one (double-click, retry on a slow network) blocks on these rows, then
+      // finds them gone and rolls back — so one bucket list can never become two orders.
+      const claimed = await tx.cartItem.deleteMany({ where: { id: { in: cartItems.map((item) => item.id) } } });
+      if (claimed.count !== cartItems.length) {
+        throw new ConflictException('Your bucket list changed or this order is already being placed. Please check My Orders.');
+      }
+
       const created: Awaited<ReturnType<typeof tx.order.create>>[] = [];
       for (const [listingId, items] of groupsByListing) {
         const sellerId = items[0].product.listing.sellerId;
@@ -236,7 +244,6 @@ export class OrdersService {
         });
       }
 
-      await tx.cartItem.deleteMany({ where: { userId: buyerId } });
       return created;
     });
 
