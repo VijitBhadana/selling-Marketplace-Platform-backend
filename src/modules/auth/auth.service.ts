@@ -14,7 +14,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { MailService } from '../../common/mail/mail.service';
 import { AttemptLimiter } from '../../common/attempt-limiter';
 import { LoginDto, RegisterDto, ResendOtpDto, VerifyOtpDto } from './dto';
-import { ADMIN_EMAIL } from '../admin/admin-account';
+import { adminLogin } from '../admin/admin-account';
 import {
   hashAadhaar,
   isValidAadhaar,
@@ -64,7 +64,7 @@ export class AuthService {
     const email = emailKey(dto.email);
     const existing = await this.findByEmail(email);
     if (existing?.isEmailVerified) throw new ConflictException('Email already registered');
-    if (email === ADMIN_EMAIL) throw new ForbiddenException('This email cannot be used to sign up');
+    if (email === adminLogin().email) throw new ForbiddenException('This email cannot be used to sign up');
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     // An empty phone string (left blank on the sign-up form) must become `undefined`,

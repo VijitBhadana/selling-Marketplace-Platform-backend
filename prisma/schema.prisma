@@ -328,6 +328,9 @@ model Listing {
   // Financing Cloude: applications buyers sent for this agency's schemes.
   financeApplications FinanceApplication[]
   notifications       Notification[]
+  // Food, Clinic & Doctors and Sports & Fitness shops: the licence / certificate uploaded
+  // when the shop was set up, plus each doctor's own one. See listings/shop-certificate.ts.
+  certificates        ShopCertificate[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -399,12 +402,38 @@ model Product {
   cartItems           CartItem[]
   orderItems          OrderItem[]
   financeApplications FinanceApplication[]
+  // Clinic & Doctors Cloude doctors: their registration certificate.
+  certificate         ShopCertificate?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([listingId])
   @@map("products")
+}
+
+// A licence / certificate a seller had to upload: FSSAI for a Food Cloude shop, medical
+// registration / drug licence for a Clinic & Doctors one (and for every doctor added to
+// it), the trainer's certificate for a Sports & Fitness one. Kept in its own table so the
+// photo never rides along with shop, cart or wishlist reads — only the admin's user
+// details return it. See listings/shop-certificate.ts.
+model ShopCertificate {
+  id        String   @id @default(uuid())
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  // Set for a doctor's own certificate; null for the shop's.
+  productId String?  @unique
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // What it is, e.g. "FSSAI licence / registration certificate", "Yoga Trainer certificate".
+  title     String
+  // Licence / registration number, when the seller gave it.
+  number    String?
+  // Base64 data URL of the photo — same storage approach as listing photos.
+  image     String
+  createdAt DateTime @default(now())
+
+  @@index([listingId])
+  @@map("shop_certificates")
 }
 
 // A buyer's "bucket list" — items added from a shop's Buy button, pending checkout.

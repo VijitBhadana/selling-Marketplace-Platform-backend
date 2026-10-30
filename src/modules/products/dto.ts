@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PRICE_UNITS } from '../cart/booking-details';
+import { CertificateDto } from '../listings/shop-certificate';
 import { ITEM_CONDITIONS } from './item-condition';
 import { PriceTypeDto } from '../listings/dto';
 
@@ -72,6 +73,13 @@ export class CreateProductDto {
   @IsOptional()
   @IsObject()
   financeDetails?: Record<string, unknown> | null;
+
+  // Clinic & Doctors Cloude doctors only — their registration certificate photo, required
+  // when a doctor is added (see listings/shop-certificate.ts). On an edit it replaces the old one.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CertificateDto)
+  certificate?: CertificateDto;
 }
 
 export class UpdateProductDto {
@@ -143,4 +151,11 @@ export class UpdateProductDto {
   @IsOptional()
   @IsObject()
   financeDetails?: Record<string, unknown> | null;
+
+  // Clinic & Doctors Cloude doctors only — their registration certificate photo, required
+  // when a doctor is added (see listings/shop-certificate.ts). On an edit it replaces the old one.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CertificateDto)
+  certificate?: CertificateDto;
 }

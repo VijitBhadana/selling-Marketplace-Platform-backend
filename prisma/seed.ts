@@ -524,7 +524,7 @@ async function main() {
     where: { slug: { notIn: currentCloudeSlugs }, listings: { none: {} } },
   });
 
-  // The one and only admin (admin@gmail.com) — also ensured on every backend start.
+  // The one and only admin (ADMIN_EMAIL / ADMIN_PASSWORD) — also ensured on every backend start.
   await ensureAdminAccount(prisma);
 
   console.log('Seed complete.');

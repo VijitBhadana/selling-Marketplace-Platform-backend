@@ -1,5 +1,20 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class StatsQuery {
   // Window for the "new sign-ups" figure.
@@ -75,4 +90,70 @@ export class AnnouncementDto {
 
   @IsIn(['ALL', 'BUYER', 'SELLER'])
   audience: 'ALL' | 'BUYER' | 'SELLER';
+}
+
+export class CreateCloudeDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(60)
+  name: string;
+
+  // Defaults to the slugified name.
+  @IsOptional()
+  @Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/, { message: 'slug may only use lowercase letters, numbers and dashes' })
+  @MaxLength(60)
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  description?: string;
+
+  // A lucide icon name registered in the frontend's components/icon.tsx.
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  icon?: string;
+
+  // Categories to create along with the Cloude.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  categories?: string[];
+}
+
+export class UpdateCloudeDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(60)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  icon?: string;
+}
+
+export class AddCategoriesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  names: string[];
+}
+
+export class RenameCategoryDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  name: string;
 }

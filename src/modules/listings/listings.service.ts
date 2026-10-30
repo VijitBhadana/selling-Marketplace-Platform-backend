@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { jobNearWhere, listingNearWhere, parseNear, type NearQuery } from '../../common/nearby';
@@ -6,13 +6,22 @@ import { scoreListings, scoreSellers, type Rating } from '../../common/seller-sc
 import { PUBLICLY_VISIBLE_USER } from '../../common/visibility';
 import { deleteListingsCascade } from '../products/product-cleanup';
 import { CreateListingDto, ListingQueryDto, UpdateListingDto } from './dto';
+import { normalizeCertificate, shopCertificateTitle } from './shop-certificate';
 
 @Injectable()
 export class ListingsService {
   constructor(private prisma: PrismaService) {}
 
   async create(sellerId: string, dto: CreateListingDto) {
-    const { images, ...rest } = dto;
+    const { images, certificate, ...rest } = dto;
+    // Food, Clinic & Doctors and Sports & Fitness shops can't open without their licence / certificate.
+    const category = await this.prisma.category.findUnique({
+      where: { id: dto.categoryId },
+      select: { name: true, slug: true, cloudeId: true, cloude: { select: { slug: true } } },
+    });
+    if (!category || category.cloudeId !== dto.cloudeId) throw new BadRequestException('Please pick a category again.');
+    const certificateTitle = shopCertificateTitle(category.cloude.slug, category.slug, category.name);
+
     return this.prisma.listing.create({
       data: {
         ...rest,
@@ -20,6 +29,7 @@ export class ListingsService {
         status: 'ACTIVE',
         coverImageUrl: images?.[0],
         images: images?.length ? { create: images.map((url, i) => ({ url, sortOrder: i })) } : undefined,
+        certificates: certificateTitle ? { create: normalizeCertificate(certificate, certificateTitle) } : undefined,
       },
       include: { images: true },
     });
@@ -265,7 +275,8 @@ export class ListingsService {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellerId !== sellerId) throw new ForbiddenException('Not your listing');
-    const { images, ...rest } = data;
+    // The certificate is only taken when the shop is set up.
+    const { images, certificate, ...rest } = data;
     return this.prisma.listing.update({ where: { id }, data: rest as any });
   }
 

@@ -158,6 +158,12 @@ export class AdminService {
             createdAt: true,
             cloude: { select: { name: true } },
             category: { select: { name: true } },
+            // Food / Clinic & Doctors / Sports & Fitness shops: their licence and each doctor's
+            // certificate, photos included, for the admin to check.
+            certificates: {
+              select: { id: true, title: true, number: true, image: true, product: { select: { name: true } } },
+              orderBy: { createdAt: 'asc' },
+            },
           },
           orderBy: { createdAt: 'desc' },
         },

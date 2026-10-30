@@ -11,8 +11,14 @@ import { FINANCING_CLOUDE_SLUG, normalizeFinanceDetails } from './finance-detail
 import { getBookingKind } from '../cart/booking-details';
 import { deleteProductsCascade } from './product-cleanup';
 import { canBeSecondHand, normalizeCondition } from './item-condition';
+import { DOCTOR_CERTIFICATE_TITLE, normalizeCertificate } from '../listings/shop-certificate';
 
 const shopCategory = { cloude: { select: { slug: true } }, category: { select: { slug: true } } } as const;
+
+function isDoctor(item: object) {
+  const details = (item as { clinicDetails?: { type?: unknown } | null }).clinicDetails;
+  return !!details && typeof details === 'object' && details.type === 'DOCTOR';
+}
 
 @Injectable()
 export class ProductsService {
@@ -30,39 +36,62 @@ export class ProductsService {
     if (!listing) throw new NotFoundException('Shop not found');
     if (listing.sellerId !== sellerId) throw new ForbiddenException('Not your shop');
 
+    const { certificate, ...fields } = dto;
+    const data = this.withConditionTerms(
+      listing,
+      this.withTransportTerms(
+        listing,
+        this.withFinanceTerms(listing, this.withEducationTerms(listing, this.withClinicTerms(listing, this.withPropertyTerms(listing, fields)))),
+        true,
+      ),
+    );
     return this.prisma.product.create({
       data: {
-        ...this.withConditionTerms(
-          listing,
-          this.withTransportTerms(
-            listing,
-            this.withFinanceTerms(listing, this.withEducationTerms(listing, this.withClinicTerms(listing, this.withPropertyTerms(listing, dto)))),
-            true,
-          ),
-        ),
+        ...data,
         listingId,
+        // Clinic & Doctors: a doctor can't be added without their registration certificate.
+        certificate: isDoctor(data) ? { create: { listingId, ...normalizeCertificate(certificate, DOCTOR_CERTIFICATE_TITLE) } } : undefined,
       },
     });
   }
 
   async update(id: string, sellerId: string, dto: UpdateProductDto) {
-    const product = await this.prisma.product.findUnique({ where: { id }, include: { listing: { include: shopCategory } } });
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: { listing: { include: shopCategory }, certificate: { select: { id: true } } },
+    });
     if (!product) throw new NotFoundException('Product not found');
     if (product.listing.sellerId !== sellerId) throw new ForbiddenException('Not your product');
+
+    const { certificate, ...fields } = dto;
+    const data = this.withConditionTerms(
+      product.listing,
+      this.withTransportTerms(
+        product.listing,
+        this.withFinanceTerms(
+          product.listing,
+          this.withEducationTerms(product.listing, this.withClinicTerms(product.listing, this.withPropertyTerms(product.listing, fields, product))),
+        ),
+        false,
+      ),
+      product,
+    );
+    // An item turned into a doctor needs the doctor's certificate; a doctor's edit may replace it.
+    // Doctors added before certificates were asked for keep working without one.
+    const wasDoctor = isDoctor(product);
+    const staysDoctor = 'clinicDetails' in data ? isDoctor(data) : wasDoctor;
+    const newCertificate =
+      staysDoctor && (certificate || (!wasDoctor && !product.certificate))
+        ? normalizeCertificate(certificate, DOCTOR_CERTIFICATE_TITLE)
+        : null;
     return this.prisma.product.update({
       where: { id },
-      data: this.withConditionTerms(
-        product.listing,
-        this.withTransportTerms(
-          product.listing,
-          this.withFinanceTerms(
-            product.listing,
-            this.withEducationTerms(product.listing, this.withClinicTerms(product.listing, this.withPropertyTerms(product.listing, dto, product))),
-          ),
-          false,
-        ),
-        product,
-      ),
+      data: {
+        ...data,
+        certificate: newCertificate
+          ? { upsert: { create: { listingId: product.listingId, ...newCertificate }, update: newCertificate } }
+          : undefined,
+      },
     });
   }
 

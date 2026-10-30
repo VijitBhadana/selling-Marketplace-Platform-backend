@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsEnum, IsIn, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsArray, IsEnum, IsIn, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PartialType } from '@nestjs/swagger';
+import { CertificateDto } from './shop-certificate';
 
 export enum PriceTypeDto {
   FIXED = 'FIXED',
@@ -63,6 +64,13 @@ export class CreateListingDto {
   @IsOptional()
   @IsArray()
   images?: string[];
+
+  // Food, Clinic & Doctors and Sports & Fitness shops only — the licence / certificate photo,
+  // required when the shop is set up (see shop-certificate.ts).
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CertificateDto)
+  certificate?: CertificateDto;
 }
 
 // A real class (not `Partial<CreateListingDto>`, which is erased at runtime) so the
