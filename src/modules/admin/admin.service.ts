@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { deleteListingsCascade } from '../products/product-cleanup';
 import { AnnouncementDto, ListSubscriptionsQuery, ListUsersQuery, UpdateThemeDto } from './dto';
 
 // Everything the admin may see about a user — never the password or OTP hashes.
@@ -215,6 +216,46 @@ export class AdminService {
           { isSuspended: false, suspendedAt: null, suspendedBy: null, codStrikeCount: 0, pendingCodWarning: false },
       select: userSelect,
     });
+  }
+
+  /**
+   * Deletes an account from the database for good, with everything that can't exist
+   * without it. Orders need both a buyer and a seller, so they go too — from the other
+   * side's history as well. Delivery profile, notifications and subscriptions cascade.
+   */
+  async deleteUser(id: string) {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { role: true } });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.role === 'ADMIN') throw new BadRequestException('The admin account cannot be deleted');
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.order.deleteMany({ where: { OR: [{ buyerId: id }, { sellerId: id }] } });
+        // A delivery partner's unfinished deliveries go back out to the other partners.
+        await tx.order.updateMany({
+          where: { deliveryPartnerId: id, deliveryStatus: { in: ['ASSIGNED', 'PICKED_UP'] } },
+          data: { deliveryStatus: 'SEARCHING', deliveryPartnerId: null, deliveryAcceptedAt: null, pickedUpAt: null },
+        });
+        await tx.message.deleteMany({ where: { senderId: id } });
+        await tx.conversation.deleteMany({ where: { OR: [{ buyerId: id }, { sellerId: id }] } });
+        await tx.financeApplication.deleteMany({ where: { OR: [{ applicantId: id }, { sellerId: id }] } });
+        await tx.jobApplication.deleteMany({ where: { applicantId: id } });
+        await tx.job.deleteMany({ where: { postedById: id } });
+        await tx.review.deleteMany({ where: { OR: [{ authorId: id }, { targetId: id }] } });
+        await tx.sellerReport.deleteMany({ where: { OR: [{ reporterId: id }, { sellerId: id }] } });
+        await tx.cartItem.deleteMany({ where: { userId: id } });
+        await tx.wishlistItem.deleteMany({ where: { userId: id } });
+
+        const listings = await tx.listing.findMany({ where: { sellerId: id }, select: { id: true } });
+        await deleteListingsCascade(
+          tx,
+          listings.map((l) => l.id),
+        );
+
+        await tx.user.delete({ where: { id } });
+      },
+      { timeout: 30_000 },
+    );
   }
 
   // Every seller account is a subscriber: the subscription starts when the

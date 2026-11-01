@@ -59,6 +59,11 @@ export class AdminController {
     return this.admin.setSuspended(id, dto.suspended);
   }
 
+  @Delete('users/:id')
+  deleteUser(@Param('id') id: string) {
+    return this.admin.deleteUser(id);
+  }
+
   @Get('subscriptions')
   listSubscriptions(@Query() query: ListSubscriptionsQuery) {
     return this.admin.listSubscriptions(query);
