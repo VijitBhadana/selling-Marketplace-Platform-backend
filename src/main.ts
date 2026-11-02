@@ -48,7 +48,7 @@ async function bootstrap() {
   if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_SWAGGER === 'true') {
     const config = new DocumentBuilder()
       .setTitle('Marketplace Platform API')
-      .setDescription('API for the multi-category "Cloude" marketplace (OLX-style)')
+      .setDescription('API for the multi-category "Cloude" marketplace')
       .setVersion('0.1')
       .addBearerAuth()
       .build();
