@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { deleteListingsCascade } from '../products/product-cleanup';
-import { AnnouncementDto, ListSubscriptionsQuery, ListUsersQuery, UpdateThemeDto } from './dto';
+import { AnnouncementDto, ListSubscriptionsQuery, ListUsersQuery, UpdateSellerKycDto, UpdateThemeDto } from './dto';
 
 // Everything the admin may see about a user — never the password or OTP hashes.
 const userSelect = {
@@ -320,5 +320,20 @@ export class AdminService {
       create: { id: 'global', ...data },
     });
     return { brandColor: setting.brandColor, glow: setting.glow, updatedBy: setting.updatedBy, updatedAt: setting.updatedAt };
+  }
+
+  // Which of GST / PAN the seller sign-up form asks for.
+  async getSellerKyc() {
+    const setting = await this.prisma.siteSetting.findUnique({ where: { id: 'global' }, select: { sellerTaxIdRule: true } });
+    return { taxIdRule: setting?.sellerTaxIdRule ?? 'EITHER' };
+  }
+
+  async updateSellerKyc(dto: UpdateSellerKycDto) {
+    const setting = await this.prisma.siteSetting.upsert({
+      where: { id: 'global' },
+      update: { sellerTaxIdRule: dto.taxIdRule },
+      create: { id: 'global', sellerTaxIdRule: dto.taxIdRule },
+    });
+    return { taxIdRule: setting.sellerTaxIdRule };
   }
 }

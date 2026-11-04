@@ -77,6 +77,13 @@ export class UpdateThemeDto {
   brandColor: string | null;
 }
 
+export const SELLER_TAX_ID_RULES = ['EITHER', 'BOTH_OPTIONAL', 'BOTH_REQUIRED', 'GST_REQUIRED', 'PAN_REQUIRED'] as const;
+
+export class UpdateSellerKycDto {
+  @IsIn(SELLER_TAX_ID_RULES)
+  taxIdRule: (typeof SELLER_TAX_ID_RULES)[number];
+}
+
 export class AnnouncementDto {
   @IsString()
   @MinLength(3)

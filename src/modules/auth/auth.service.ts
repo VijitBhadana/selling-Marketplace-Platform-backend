@@ -72,12 +72,18 @@ export class AuthService {
     // otherwise collide on the empty string and crash with a raw 500.
     const phone = dto.phone?.trim() || undefined;
 
-    // Sellers must give a valid Aadhaar, plus a GSTIN or (without GST) a PAN — offline
-    // checks only. Buyers' values, if any, are ignored.
+    // Sellers must give a valid Aadhaar, plus whichever of GSTIN / PAN the admin's rule
+    // asks for — offline checks only. Buyers' values, if any, are ignored.
     let sellerKyc: { aadhaarHash: string; aadhaarLast4: string; gstin: string | null; pan: string | null } | undefined;
     if (dto.role === 'SELLER') {
       const aadhaar = this.checkAadhaar(dto.aadhaar, 'seller accounts');
-      if (!dto.gstin && !dto.pan) throw new BadRequestException("Please enter your GST number — or your PAN if you don't have GST");
+      const setting = await this.prisma.siteSetting.findUnique({ where: { id: 'global' }, select: { sellerTaxIdRule: true } });
+      const rule = setting?.sellerTaxIdRule ?? 'EITHER';
+      if (rule === 'EITHER' && !dto.gstin && !dto.pan) {
+        throw new BadRequestException("Please enter your GST number — or your PAN if you don't have GST");
+      }
+      if ((rule === 'BOTH_REQUIRED' || rule === 'GST_REQUIRED') && !dto.gstin) throw new BadRequestException('Please enter your GST number');
+      if ((rule === 'BOTH_REQUIRED' || rule === 'PAN_REQUIRED') && !dto.pan) throw new BadRequestException('Please enter your PAN number');
       const gstin = dto.gstin ? normalizeGstin(dto.gstin) : null;
       if (gstin && gstin.length !== 15) throw new BadRequestException('GST number must be exactly 15 characters');
       if (gstin && !isValidGstin(gstin)) {

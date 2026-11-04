@@ -15,6 +15,7 @@ import {
   SetSuspendedDto,
   StatsQuery,
   UpdateCloudeDto,
+  UpdateSellerKycDto,
   UpdateThemeDto,
 } from './dto';
 
@@ -79,6 +80,11 @@ export class AdminController {
     return this.admin.updateTheme(dto, req.user?.email ?? null);
   }
 
+  @Put('seller-kyc')
+  updateSellerKyc(@Body() dto: UpdateSellerKycDto) {
+    return this.admin.updateSellerKyc(dto);
+  }
+
   @Get('cloudes')
   listCloudes() {
     return this.cloudes.list();
@@ -124,5 +130,11 @@ export class SettingsController {
   @Get('theme')
   theme() {
     return this.admin.getTheme();
+  }
+
+  // Public: the seller sign-up form reads which of GST / PAN to ask for.
+  @Get('seller-kyc')
+  sellerKyc() {
+    return this.admin.getSellerKyc();
   }
 }

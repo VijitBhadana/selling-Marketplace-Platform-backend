@@ -140,6 +140,15 @@ enum GlowLevel {
   MINIMAL
 }
 
+// Which of GST / PAN a new seller must give at sign-up (Aadhaar is always required).
+enum SellerTaxIdRule {
+  EITHER        // at least one of the two
+  BOTH_OPTIONAL
+  BOTH_REQUIRED
+  GST_REQUIRED  // PAN optional
+  PAN_REQUIRED  // GST optional
+}
+
 enum SuspensionSource {
   COD_NO_SHOW
   ADMIN
@@ -814,6 +823,7 @@ model SiteSetting {
   brandColor String?
   // How strongly brand-tinted glows are drawn around CTAs across the site.
   glow       GlowLevel @default(VIVID)
+  sellerTaxIdRule SellerTaxIdRule @default(EITHER) @map("seller_tax_id_rule")
   // Who saved the theme last, for the "last saved" line in the admin panel.
   updatedBy  String?
   updatedAt  DateTime  @updatedAt

@@ -20,6 +20,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { AdminModule } from './modules/admin/admin.module';
 import { AdvertisementsModule } from './modules/advertisements/advertisements.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
+import { GeoModule } from './modules/geo/geo.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { DeliveryModule } from './modules/delivery/delivery.module';
     AdminModule,
     AdvertisementsModule,
     DeliveryModule,
+    GeoModule,
   ],
   controllers: [HealthController],
 })
