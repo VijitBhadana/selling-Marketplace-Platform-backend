@@ -100,3 +100,22 @@ export class ResendOtpDto {
   @IsEmail()
   email: string;
 }
+
+export class ForgotPasswordDto {
+  @IsEmail()
+  email: string;
+}
+
+export class ResetPasswordDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'otp must be exactly 6 digits' })
+  otp: string;
+
+  // Same rule as sign-up.
+  @IsString()
+  @MinLength(6)
+  newPassword: string;
+}

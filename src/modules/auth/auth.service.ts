@@ -13,8 +13,9 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { MailService } from '../../common/mail/mail.service';
 import { AttemptLimiter } from '../../common/attempt-limiter';
-import { LoginDto, RegisterDto, ResendOtpDto, VerifyOtpDto } from './dto';
+import { ForgotPasswordDto, LoginDto, RegisterDto, ResendOtpDto, ResetPasswordDto, VerifyOtpDto } from './dto';
 import { adminLogin } from '../admin/admin-account';
+import { passwordVersion } from './password-version';
 import {
   hashAadhaar,
   isValidAadhaar,
@@ -281,7 +282,69 @@ export class AuthService {
     this.otpEmailsPerAddress.attempt(emailKey(email), tooMany);
   }
 
-  private async issueOtp(userId: string, email: string) {
+  /**
+   * Sends a password-reset code. The answer is the same whether or not the email has an
+   * account, so this can't be used to find out who is registered.
+   *
+   * The code lives in the same emailOtpHash / emailOtpExpiresAt columns as the sign-up
+   * code (a verified account never uses them otherwise), so no migration is needed. Both
+   * kinds of code prove the person controls the inbox, so either may be used for either.
+   */
+  async forgotPassword(dto: ForgotPasswordDto, ip?: string) {
+    const response = { message: 'If an account exists for this email, we have sent a 6-digit code to it.' };
+    const email = emailKey(dto.email);
+
+    // Counted for every request, account or not, so a 429 doesn't reveal which emails exist.
+    this.limitOtpEmails(email, ip);
+
+    const user = await this.findByEmail(email);
+    // The admin's password comes from ADMIN_PASSWORD and is restored on every boot — a
+    // reset would be silently undone, so it is never offered.
+    if (!user || user.role === 'ADMIN' || emailKey(user.email) === adminLogin().email) return response;
+
+    // One code a minute; a quicker repeat is answered the same way but sends nothing.
+    const sentAt = user.emailOtpExpiresAt ? user.emailOtpExpiresAt.getTime() - OTP_TTL_MS : 0;
+    if (Date.now() - sentAt < OTP_RESEND_COOLDOWN_MS) return response;
+
+    await this.issueOtp(user.id, user.email, 'reset');
+    return response;
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    // Shares the per-email guess counter with sign-up verification — it is the same code.
+    const attempts = this.otpAttempts.attempt(emailKey(dto.email), () => 'Too many wrong codes. Please request a new one.');
+    const user = await this.findByEmail(dto.email);
+    if (!user || user.role === 'ADMIN' || !user.emailOtpHash || !user.emailOtpExpiresAt || user.emailOtpExpiresAt < new Date()) {
+      throw new BadRequestException('This code is invalid or has expired. Please request a new one.');
+    }
+
+    const valid = await bcrypt.compare(dto.otp, user.emailOtpHash);
+    if (!valid) {
+      if (attempts >= MAX_OTP_ATTEMPTS) {
+        await this.prisma.user.update({ where: { id: user.id }, data: { emailOtpHash: null, emailOtpExpiresAt: null } });
+        throw new HttpException('Too many wrong codes. Please request a new one.', HttpStatus.TOO_MANY_REQUESTS);
+      }
+      throw new BadRequestException('Incorrect code. Please check the email and try again.');
+    }
+    this.otpAttempts.reset(emailKey(dto.email));
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await bcrypt.hash(dto.newPassword, 10),
+        emailOtpHash: null,
+        emailOtpExpiresAt: null,
+        // The code just proved they own the inbox, so an unfinished sign-up is now verified.
+        isEmailVerified: true,
+      },
+    });
+    // A lockout from guessing the old password shouldn't block the new one.
+    this.loginAttempts.reset(emailKey(dto.email));
+    // The new password hash changes `pwv`, which signs out every existing session (see JwtStrategy).
+    return { message: 'Your password has been updated. Please log in with your new password.' };
+  }
+
+  private async issueOtp(userId: string, email: string, purpose: 'verify' | 'reset' = 'verify') {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const emailOtpHash = await bcrypt.hash(otp, 10);
     await this.prisma.user.update({
@@ -290,7 +353,8 @@ export class AuthService {
     });
     // A new code gets its own allowance of guesses.
     this.otpAttempts.reset(emailKey(email));
-    await this.mail.sendOtpEmail(email, otp);
+    if (purpose === 'reset') await this.mail.sendPasswordResetEmail(email, otp);
+    else await this.mail.sendOtpEmail(email, otp);
   }
 
   async login(dto: LoginDto) {
@@ -331,8 +395,8 @@ export class AuthService {
     return this.buildAuthResponse(user);
   }
 
-  private buildAuthResponse(user: { id: string; email: string; name: string; role: string }) {
-    const payload = { sub: user.id, email: user.email, role: user.role };
+  private buildAuthResponse(user: { id: string; email: string; name: string; role: string; passwordHash: string }) {
+    const payload = { sub: user.id, email: user.email, role: user.role, pwv: passwordVersion(user.passwordHash) };
     return {
       accessToken: this.jwt.sign(payload),
       user: { id: user.id, email: user.email, name: user.name, role: user.role },
