@@ -311,6 +311,10 @@ model Listing {
   status        ListingStatus  @default(DRAFT)
   city          String?
   pincode       String?
+  // Shop address the seller types in (Post Your Ad, Location step) — city & pincode can
+  // come from "Use current location", these two never do.
+  addressLine   String? // house / shop no., block, street, area
+  landmark      String?
   latitude      Float?
   longitude     Float?
   // Dynamic attribute values matching the Category's attributeSchema

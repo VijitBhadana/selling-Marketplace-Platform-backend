@@ -48,6 +48,17 @@ export class CreateListingDto {
   @IsString()
   pincode?: string;
 
+  // House / shop no., block, street, area — typed by the seller.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  addressLine?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  landmark?: string;
+
   // Filled when the seller used "Use current location" — lets buyers ~25 km away find the shop.
   @IsOptional()
   @IsNumber()

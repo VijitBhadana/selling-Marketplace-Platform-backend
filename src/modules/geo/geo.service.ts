@@ -83,20 +83,29 @@ export class GeoService {
   }
 }
 
-/** The first city / colony / pincode across Ola's results (nearest first). */
+/**
+ * City / colony / pincode from Ola's results, which come nearest first. Each field is taken
+ * from the nearest result that has it, and within that result the most specific name wins.
+ * Searching type-first across all results let a broad sublocality from a result ~4 km away
+ * (e.g. "Ansal City") beat the colony the pin was actually in (e.g. "Vedvyaspuri").
+ */
 export function parsePlace(results: OlaResult[]): Place {
-  const first = (...types: string[]) => {
-    for (const type of types) {
-      for (const r of results) {
-        const c = r.address_components?.find((c) => c.types?.includes(type) && c.long_name?.trim());
-        if (c) return c.long_name!.trim();
+  const nearest = (types: string[], skip?: string | null) => {
+    for (const r of results) {
+      for (const type of types) {
+        const name = r.address_components
+          ?.find((c) => c.types?.includes(type) && c.long_name?.trim() && c.long_name.trim().toLowerCase() !== skip)
+          ?.long_name!.trim();
+        if (name) return name;
       }
     }
     return null;
   };
-  const city = first('locality', 'administrative_area_level_3', 'administrative_area_level_2');
-  let area = first('sublocality_level_1', 'sublocality', 'neighborhood');
-  if (area && city && area.toLowerCase() === city.toLowerCase()) area = null;
-  const pincode = first('postal_code');
+  const city = nearest(['locality', 'administrative_area_level_3', 'administrative_area_level_2']);
+  const area = nearest(
+    ['neighborhood', 'sublocality_level_2', 'sublocality_level_1', 'sublocality'],
+    city?.toLowerCase(),
+  );
+  const pincode = nearest(['postal_code']);
   return { city, area, pincode: pincode && /^\d{6}$/.test(pincode) ? pincode : null };
 }
